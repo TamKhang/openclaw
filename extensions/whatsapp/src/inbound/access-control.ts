@@ -5,6 +5,7 @@ import { upsertChannelPairingRequest } from "openclaw/plugin-sdk/conversation-ru
 import { defaultRuntime } from "openclaw/plugin-sdk/runtime-env";
 import { warnMissingProviderGroupPolicyFallbackOnce } from "openclaw/plugin-sdk/runtime-group-policy";
 import { resolveWhatsAppInboundPolicy, resolveWhatsAppIngressAccess } from "../inbound-policy.js";
+import { assertWhatsAppOutboundAllowed } from "../outbound-destination-safety.js";
 import { buildWhatsAppInboundAdmission, type WhatsAppInboundAdmission } from "./admission.js";
 
 type BlockedInboundAccessControlResult = {
@@ -160,6 +161,7 @@ export async function checkInboundAccessControl(params: {
             );
           },
           sendPairingReply: async (text) => {
+            assertWhatsAppOutboundAllowed(params.remoteJid);
             await params.sock.sendMessage(params.remoteJid, { text });
           },
           onReplyError: (err) => {

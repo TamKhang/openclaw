@@ -9,6 +9,7 @@ import { recordChannelActivity } from "openclaw/plugin-sdk/channel-activity-runt
 import { resolveWhatsAppDocumentFileName } from "../document-filename.js";
 import { addWhatsAppImagePreviewFields } from "../image-preview.js";
 import { isWhatsAppNewsletterJid } from "../normalize.js";
+import { assertWhatsAppOutboundAllowed } from "../outbound-destination-safety.js";
 import { buildQuotedMessageOptions } from "../quoted-message.js";
 import { toWhatsappJid, toWhatsappJidWithLid } from "../text-runtime.js";
 import {
@@ -88,6 +89,7 @@ export function createWebSendApi(params: {
     kind: WhatsAppSendKind,
   ): Promise<WhatsAppSendResult> => {
     const jid = resolveOutboundJid(to);
+    assertWhatsAppOutboundAllowed(jid);
     const result = await params.sock.sendMessage(jid, content);
     recordWhatsAppOutbound(params.defaultAccountId);
     return normalizeWhatsAppSendResult(result, kind);
@@ -103,6 +105,7 @@ export function createWebSendApi(params: {
     ): Promise<WhatsAppSendResult> => {
       let mediaType = mediaTypeInput;
       const jid = resolveOutboundJid(to);
+      assertWhatsAppOutboundAllowed(jid);
       let payload: AnyMessageContent;
       if (mediaBuffer) {
         mediaType ??= "application/octet-stream";
@@ -260,6 +263,7 @@ export function createWebSendApi(params: {
       // Resolve DM targets through the same LID-aware path as normal sends so
       // reactions land on the delivered WhatsApp message key.
       const jid = resolveOutboundJid(chatJid);
+      assertWhatsAppOutboundAllowed(jid);
       const result = await params.sock.sendMessage(jid, {
         react: {
           text: emoji,
@@ -275,6 +279,7 @@ export function createWebSendApi(params: {
     },
     sendComposingTo: async (to: string): Promise<void> => {
       const jid = resolveOutboundJid(to);
+      assertWhatsAppOutboundAllowed(jid);
       if (isWhatsAppNewsletterJid(jid)) {
         return;
       }

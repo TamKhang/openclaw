@@ -341,6 +341,28 @@ describe("checkInboundAccessControl pairing grace", () => {
     expect(upsertPairingRequestMock).toHaveBeenCalled();
     expect(sendMessageMock).toHaveBeenCalled();
   });
+
+  it("denies a pairing reply when malformed ingress metadata resolves to a group", async () => {
+    const result = await checkInboundAccessControl({
+      cfg: getAccessControlTestConfig() as never,
+      accountId: "work",
+      from: "+15550001111",
+      selfE164: "+15550009999",
+      senderE164: "+15550001111",
+      group: false,
+      pushName: "Stranger",
+      isFromMe: false,
+      messageTimestampMs: 990_000,
+      connectedAtMs: 1_000_000,
+      pairingGraceMs: 30_000,
+      sock: { sendMessage: sendMessageMock },
+      remoteJid: "120363401234567890@g.us",
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(upsertPairingRequestMock).toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("WhatsApp dmPolicy precedence", () => {

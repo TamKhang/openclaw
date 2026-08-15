@@ -191,7 +191,7 @@ describe("web monitor inbox", () => {
     await listener.close();
   });
 
-  it("includes participant when marking group messages read", async () => {
+  it("never marks group messages read", async () => {
     const { listener, sock } = await runSingleUpsertAndCapture({
       type: "notify",
       messages: [
@@ -207,14 +207,7 @@ describe("web monitor inbox", () => {
       ],
     });
 
-    expect(sock.readMessages).toHaveBeenCalledWith([
-      {
-        remoteJid: "12345-67890@g.us",
-        id: "grp1",
-        participant: "111@s.whatsapp.net",
-        fromMe: false,
-      },
-    ]);
+    expect(sock.readMessages).not.toHaveBeenCalled();
     await listener.close();
   });
 
