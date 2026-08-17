@@ -30,6 +30,7 @@ import { readWebSelfIdentityForDecision, WhatsAppAuthUnstableError } from "../au
 import { getRegisteredWhatsAppConnectionController } from "../connection-controller-registry.js";
 import { getPrimaryIdentityId, identitiesOverlap, resolveComparableIdentity } from "../identity.js";
 import { addWhatsAppImagePreviewFields } from "../image-preview.js";
+import { assertWhatsAppOutboundAllowed } from "../outbound-destination-safety.js";
 import { cacheInboundMessageMeta } from "../quoted-message.js";
 import { DEFAULT_RECONNECT_POLICY, computeBackoff, sleepWithAbort } from "../reconnect.js";
 import type { OpenClawConfig } from "../runtime-api.js";
@@ -1088,6 +1089,7 @@ export async function attachWebInboxToSocket(
     }
     const { id, remoteJid, participant } = target;
     try {
+      assertWhatsAppOutboundAllowed(remoteJid);
       await withWhatsAppSocketOperationTimeout(
         "readMessages",
         (getCurrentSock() ?? sock).readMessages([{ remoteJid, id, participant, fromMe: false }]),

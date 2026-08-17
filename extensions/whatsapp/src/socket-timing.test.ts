@@ -198,4 +198,36 @@ describe("createWhatsAppSocketOperationTimeoutAdapter", () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("denies every group message attempt before the raw socket, including retries", async () => {
+    const sock = {
+      sendMessage: vi.fn(async () => ({ key: { id: "forbidden" } }) as WAMessage),
+      sendPresenceUpdate: vi.fn(async () => undefined),
+    };
+    const adapter = createWhatsAppSocketOperationTimeoutAdapter(sock, 30_000);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        adapter.sendMessage("120363000000000000@g.us", { text: "forbidden" }),
+      ).rejects.toMatchObject({
+        code: "WHATSAPP_GROUP_OUTBOUND_DENIED",
+        deliveryState: "not_sent",
+      });
+    }
+
+    expect(sock.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("denies group presence before the raw socket", async () => {
+    const sock = {
+      sendMessage: vi.fn(async () => ({ key: { id: "forbidden" } }) as WAMessage),
+      sendPresenceUpdate: vi.fn(async () => undefined),
+    };
+    const adapter = createWhatsAppSocketOperationTimeoutAdapter(sock, 30_000);
+
+    await expect(
+      adapter.sendPresenceUpdate("composing", "120363000000000000@g.us"),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
+  });
 });

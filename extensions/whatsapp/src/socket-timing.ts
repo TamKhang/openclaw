@@ -7,6 +7,7 @@ import type {
 } from "baileys";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
+import { assertWhatsAppOutboundAllowed } from "./outbound-destination-safety.js";
 
 export type WhatsAppSocketTimingOptions = {
   keepAliveIntervalMs?: number;
@@ -138,6 +139,7 @@ export function createWhatsAppSocketOperationTimeoutAdapter(
   return {
     sendMessage: (jid, content, options) => {
       return runSerializedSocketSendMessage(sock, () => {
+        assertWhatsAppOutboundAllowed(jid);
         const send = options
           ? sock.sendMessage(jid, content, options)
           : sock.sendMessage(jid, content);
@@ -151,12 +153,19 @@ export function createWhatsAppSocketOperationTimeoutAdapter(
         );
       });
     },
-    sendPresenceUpdate: (presence, jid) => {
+    sendPresenceUpdate: async (presence, jid) => {
+      if (jid !== undefined) {
+        assertWhatsAppOutboundAllowed(jid);
+      }
       const send =
         jid === undefined
           ? sock.sendPresenceUpdate(presence)
           : sock.sendPresenceUpdate(presence, jid);
-      return withWhatsAppSocketOperationTimeout("sendPresenceUpdate", send, operationTimeoutMs);
+      return await withWhatsAppSocketOperationTimeout(
+        "sendPresenceUpdate",
+        send,
+        operationTimeoutMs,
+      );
     },
   };
 }

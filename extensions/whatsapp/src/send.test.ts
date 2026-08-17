@@ -852,4 +852,56 @@ describe("web outbound", () => {
       undefined,
     );
   });
+
+  it("denies every public group transport entry before the active listener", async () => {
+    const group = "120363000000000000@g.us";
+    await expect(
+      sendMessageWhatsApp(group, "forbidden", { verbose: false, cfg: WHATSAPP_TEST_CFG }),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    await expect(
+      sendMessageWhatsApp(group, "caption", {
+        verbose: false,
+        cfg: WHATSAPP_TEST_CFG,
+        mediaPayload: { buffer: Buffer.from("image"), contentType: "image/jpeg" },
+      }),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    await expect(
+      sendPollWhatsApp(
+        group,
+        { question: "Forbidden?", options: ["yes", "no"] },
+        { verbose: false, cfg: WHATSAPP_TEST_CFG },
+      ),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    await expect(
+      sendReactionWhatsApp(group, "msg", "👍", {
+        verbose: false,
+        cfg: WHATSAPP_TEST_CFG,
+      }),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    await expect(sendTypingWhatsApp(group, { cfg: WHATSAPP_TEST_CFG })).rejects.toMatchObject({
+      code: "WHATSAPP_GROUP_OUTBOUND_DENIED",
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendPoll).not.toHaveBeenCalled();
+    expect(sendReaction).not.toHaveBeenCalled();
+    expect(sendComposingTo).not.toHaveBeenCalled();
+  });
+
+  it("allows direct-user text, media, and notification-style sends", async () => {
+    await sendMessageWhatsApp("+1555", "direct text", {
+      verbose: false,
+      cfg: WHATSAPP_TEST_CFG,
+    });
+    await sendMessageWhatsApp("+1555", "direct media", {
+      verbose: false,
+      cfg: WHATSAPP_TEST_CFG,
+      mediaPayload: { buffer: Buffer.from("image"), contentType: "image/jpeg" },
+    });
+    await sendMessageWhatsApp("+1555", "[NOTICE] direct notification", {
+      verbose: false,
+      cfg: WHATSAPP_TEST_CFG,
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
 });

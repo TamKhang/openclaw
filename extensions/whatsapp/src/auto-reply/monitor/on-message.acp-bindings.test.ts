@@ -3,6 +3,8 @@ import type { ConfiguredBindingRouteResult } from "openclaw/plugin-sdk/conversat
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const processMessageMock = vi.hoisted(() => vi.fn());
+const messageReceivedHookMock = vi.hoisted(() => vi.fn());
+const resolveConversationGroupPolicyMock = vi.hoisted(() => vi.fn());
 const maybeBroadcastMessageMock = vi.hoisted(() => vi.fn());
 const resolveConfiguredBindingRouteMock = vi.hoisted(() => vi.fn());
 const ensureConfiguredBindingRouteReadyMock = vi.hoisted(() => vi.fn());
@@ -49,8 +51,17 @@ vi.mock("../../group-session-key.js", () => ({
   resolveWhatsAppGroupSessionRoute: (route: unknown) => route,
 }));
 
+vi.mock("../../inbound-policy.js", () => ({
+  resolveWhatsAppInboundPolicy: () => ({
+    account: { accountId: "work" },
+    resolveConversationGroupPolicy: (...args: unknown[]) =>
+      resolveConversationGroupPolicyMock(...args),
+  }),
+}));
+
 vi.mock("../../identity.js", () => ({
   getPrimaryIdentityId: () => "+15551234567",
+  getSelfIdentity: () => ({ e164: "+15559876543" }),
   getSenderIdentity: () => ({ e164: "+15551234567", name: "Alice" }),
 }));
 
@@ -67,6 +78,8 @@ vi.mock("./last-route.js", () => ({
 }));
 
 vi.mock("./process-message.js", () => ({
+  emitWhatsAppMessageReceivedHooksIfEnabled: (...args: unknown[]) =>
+    messageReceivedHookMock(...args),
   processMessage: (...args: unknown[]) => processMessageMock(...args),
 }));
 
@@ -295,6 +308,9 @@ function createMessage() {
         id: "15551234567@s.whatsapp.net",
       },
     },
+    event: {
+      timestamp: 1710000000,
+    },
     platform: {
       chatJid: "15551234567@s.whatsapp.net",
       recipientJid: "15559876543@s.whatsapp.net",
@@ -357,6 +373,12 @@ function createGroupAudioMessage() {
 
 describe("createWebOnMessageHandler configured ACP bindings", () => {
   beforeEach(() => {
+    messageReceivedHookMock.mockReset();
+    resolveConversationGroupPolicyMock.mockReset();
+    resolveConversationGroupPolicyMock.mockReturnValue({
+      allowlistEnabled: false,
+      allowed: true,
+    });
     processMessageMock.mockReset();
     processMessageMock.mockResolvedValue(true);
     maybeBroadcastMessageMock.mockReset();
@@ -395,6 +417,25 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
       cfg: expect.any(Object),
       bindingResolution: configuredBindingResolution,
     });
+    expect(messageReceivedHookMock).toHaveBeenCalledTimes(1);
+    expect(messageReceivedHookMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        accountId: "work",
+        sessionKey: boundSessionKey,
+        ctx: expect.objectContaining({
+          MessageSid: "msg-1",
+          Timestamp: 1710000000,
+          Body: "hello",
+          From: "15551234567@s.whatsapp.net",
+          SenderId: "+15551234567",
+          SessionKey: boundSessionKey,
+          AccountId: "work",
+          Provider: "whatsapp",
+          Surface: "whatsapp",
+          OriginatingTo: "15551234567@s.whatsapp.net",
+        }),
+      }),
+    );
     expect(processMessageMock).toHaveBeenCalledTimes(1);
     expect(processMessageMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
@@ -507,8 +548,28 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
     await handler(createGroupMessage());
 
     expect(applyGroupGatingMock).toHaveBeenCalledTimes(1);
+    expect(messageReceivedHookMock).toHaveBeenCalledTimes(1);
     expect(updateLastRouteInBackgroundMock).not.toHaveBeenCalled();
     expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
+    expect(processMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("does not observe an unauthorized configured group", async () => {
+    resolveConfiguredBindingRouteMock.mockImplementationOnce(({ route }) => ({
+      bindingResolution: null,
+      route,
+    }));
+    resolveConversationGroupPolicyMock.mockReturnValueOnce({
+      allowlistEnabled: true,
+      allowed: false,
+    });
+    applyGroupGatingMock.mockResolvedValueOnce({ shouldProcess: false });
+
+    const { handler } = createHandler(vi.fn(), createGroupCfg());
+
+    await handler(createGroupMessage());
+
+    expect(messageReceivedHookMock).not.toHaveBeenCalled();
     expect(processMessageMock).not.toHaveBeenCalled();
   });
 
@@ -656,6 +717,7 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
     expect(ensureConfiguredBindingRouteReadyMock.mock.invocationCallOrder[0]).toBeLessThan(
       updateLastRouteInBackgroundMock.mock.invocationCallOrder[0] ?? 0,
     );
+    expect(messageReceivedHookMock).toHaveBeenCalledTimes(1);
     expect(processMessageMock).toHaveBeenCalledTimes(1);
   });
 });

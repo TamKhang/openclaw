@@ -20,6 +20,7 @@ import { getRegisteredWhatsAppConnectionController } from "./connection-controll
 import { resolveWhatsAppDocumentFileName } from "./document-filename.js";
 import type { ActiveWebListener, ActiveWebSendOptions } from "./inbound/types.js";
 import { isWhatsAppNewsletterJid } from "./normalize.js";
+import { assertWhatsAppOutboundAllowed } from "./outbound-destination-safety.js";
 import {
   normalizeWhatsAppPayloadText,
   prepareWhatsAppOutboundMedia,
@@ -156,6 +157,7 @@ export async function sendMessageWhatsApp(
 ): Promise<{ messageId: string; toJid: string }> {
   let text = options.preserveLeadingWhitespace ? body : normalizeWhatsAppPayloadText(body);
   const jid = toWhatsappJid(to);
+  assertWhatsAppOutboundAllowed(jid);
   const mediaUrls = resolveWhatsAppOutboundMediaUrls(options);
   const mediaPayload = options.mediaPayload;
   const primaryMediaUrl = mediaUrls[0] ?? mediaPayload?.fileName;
@@ -288,12 +290,14 @@ export async function sendTypingWhatsApp(
     accountId?: string;
   },
 ): Promise<void> {
+  const jid = toWhatsappJid(to);
+  assertWhatsAppOutboundAllowed(jid);
   const cfg = requireRuntimeConfig(options.cfg, "WhatsApp typing send");
   const { listener: active } = requireOutboundActiveWebListener({
     cfg,
     accountId: options.accountId,
   });
-  if (!isWhatsAppNewsletterJid(toWhatsappJid(to))) {
+  if (!isWhatsAppNewsletterJid(jid)) {
     await active.assertSendReady?.(to);
     await active.sendComposingTo(to);
   }
@@ -311,6 +315,8 @@ export async function sendReactionWhatsApp(
     cfg: OpenClawConfig;
   },
 ): Promise<void> {
+  const jid = toWhatsappJid(chatJid);
+  assertWhatsAppOutboundAllowed(jid);
   const correlationId = generateSecureUuid();
   const cfg = requireRuntimeConfig(options.cfg, "WhatsApp reaction");
   const { listener: active } = requireOutboundActiveWebListener({
@@ -325,7 +331,6 @@ export async function sendReactionWhatsApp(
     messageId,
   });
   try {
-    const jid = toWhatsappJid(chatJid);
     const redactedJid = redactIdentifier(jid);
     outboundLog.info(`Sending reaction "${emoji}" -> message ${messageId}`);
     logger.info({ chatJid: redactedJid, messageId, emoji }, "sending reaction");
@@ -352,6 +357,8 @@ export async function sendPollWhatsApp(
   poll: PollInput,
   options: { verbose: boolean; accountId?: string; cfg: OpenClawConfig },
 ): Promise<{ messageId: string; toJid: string }> {
+  const jid = toWhatsappJid(to);
+  assertWhatsAppOutboundAllowed(jid);
   const correlationId = generateSecureUuid();
   const startedAt = Date.now();
   const cfg = requireRuntimeConfig(options.cfg, "WhatsApp poll");
@@ -366,7 +373,6 @@ export async function sendPollWhatsApp(
     to: redactedTo,
   });
   try {
-    const jid = toWhatsappJid(to);
     const redactedJid = redactIdentifier(jid);
     const normalized = normalizePollInput(poll, { maxOptions: 12 });
     outboundLog.info(`Sending poll -> ${redactedJid}`);

@@ -293,7 +293,7 @@ describe("createWebSendApi", () => {
     });
   });
 
-  it("adds native mention metadata to group text sends", async () => {
+  it("denies group text before mention resolution or provider send", async () => {
     api = createWebSendApi({
       sock: { sendMessage, sendPresenceUpdate },
       defaultAccountId: "main",
@@ -310,12 +310,13 @@ describe("createWebSendApi", () => {
         }),
     });
 
-    await api.sendMessage("120363000000000000@g.us", "ping @+5511976136970");
-
-    expect(sendMessage).toHaveBeenCalledWith("120363000000000000@g.us", {
-      text: "ping @277038292303944",
-      mentions: ["277038292303944@lid"],
+    await expect(
+      api.sendMessage("120363000000000000@g.us", "ping @+5511976136970"),
+    ).rejects.toMatchObject({
+      code: "WHATSAPP_GROUP_OUTBOUND_DENIED",
+      deliveryState: "not_sent",
     });
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("supports image media with caption", async () => {
@@ -353,7 +354,7 @@ describe("createWebSendApi", () => {
     });
   });
 
-  it("adds native mention metadata to group media captions", async () => {
+  it("denies group media captions before provider send", async () => {
     api = createWebSendApi({
       sock: { sendMessage, sendPresenceUpdate },
       defaultAccountId: "main",
@@ -366,18 +367,13 @@ describe("createWebSendApi", () => {
     });
     const payload = Buffer.from("img");
 
-    await api.sendMessage("120363000000000000@g.us", "cap @15551234567", payload, "image/jpeg");
-
-    expectFirstSendJid("120363000000000000@g.us");
-    expectSendContentFields(0, {
-      image: payload,
-      caption: "cap @15551234567",
-      mimetype: "image/jpeg",
-      mentions: ["15551234567@s.whatsapp.net"],
-    });
+    await expect(
+      api.sendMessage("120363000000000000@g.us", "cap @15551234567", payload, "image/jpeg"),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("uses resolved mention caption text for forced-document media", async () => {
+  it("denies forced-document group media before provider send", async () => {
     api = createWebSendApi({
       sock: { sendMessage, sendPresenceUpdate },
       defaultAccountId: "main",
@@ -395,19 +391,13 @@ describe("createWebSendApi", () => {
     });
     const payload = Buffer.from("img");
 
-    await api.sendMessage("120363000000000000@g.us", "cap @+5511976136970", payload, "image/jpeg", {
-      asDocument: true,
-      fileName: "promo.jpg",
-    });
-
-    expectFirstSendJid("120363000000000000@g.us");
-    expectSendContentFields(0, {
-      document: payload,
-      fileName: "promo.jpg",
-      caption: "cap @277038292303944",
-      mimetype: "image/jpeg",
-      mentions: ["277038292303944@lid"],
-    });
+    await expect(
+      api.sendMessage("120363000000000000@g.us", "cap @+5511976136970", payload, "image/jpeg", {
+        asDocument: true,
+        fileName: "promo.jpg",
+      }),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("supports audio as push-to-talk voice note", async () => {
@@ -534,17 +524,36 @@ describe("createWebSendApi", () => {
     });
   });
 
-  it("preserves LID participants in reaction keys", async () => {
-    await api.sendReaction("12345@g.us", "msg-2", "👍", false, "123@lid");
-    expectFirstSendJid("12345@g.us");
-    const react = requireRecord(requireSendContent().react, "reaction content");
-    expect(react.text).toBe("👍");
-    expectRecordFields(requireRecord(react.key, "reaction key"), {
-      remoteJid: "12345@g.us",
-      id: "msg-2",
-      fromMe: false,
-      participant: "123@lid",
+  it("denies group reactions before provider send", async () => {
+    await expect(
+      api.sendReaction("12345@g.us", "msg-2", "👍", false, "123@lid"),
+    ).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("denies every structured group operation before provider transport", async () => {
+    const group = "12345@g.us";
+    const attempts = [
+      () => api.sendPoll(group, { question: "Q?", options: ["a", "b"] }),
+      () => api.sendContact(group, { displayName: "Contact", vcard: "BEGIN:VCARD" }),
+      () =>
+        api.sendLocation(group, {
+          degreesLatitude: 1,
+          degreesLongitude: 2,
+        }),
+      () => api.sendSticker(group, Buffer.from("webp")),
+    ];
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toMatchObject({ code: "WHATSAPP_GROUP_OUTBOUND_DENIED" });
+    }
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("denies group composing presence before provider transport", async () => {
+    await expect(api.sendComposingTo("12345@g.us")).rejects.toMatchObject({
+      code: "WHATSAPP_GROUP_OUTBOUND_DENIED",
     });
+    expect(sendPresenceUpdate).not.toHaveBeenCalled();
   });
 
   it("sends composing presence updates to the recipient JID", async () => {
