@@ -1,5 +1,9 @@
 // Whatsapp plugin module implements on message behavior.
 import type { AckReactionHandle } from "openclaw/plugin-sdk/channel-feedback";
+import {
+  buildChannelInboundEventContext,
+  toInboundMediaFacts,
+} from "openclaw/plugin-sdk/channel-inbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   ensureConfiguredBindingRouteReady,
@@ -12,7 +16,8 @@ import { buildGroupHistoryKey } from "openclaw/plugin-sdk/routing";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import { resolveWhatsAppGroupSessionRoute } from "../../group-session-key.js";
-import { getPrimaryIdentityId, getSenderIdentity } from "../../identity.js";
+import { getPrimaryIdentityId, getSelfIdentity, getSenderIdentity } from "../../identity.js";
+import { resolveWhatsAppInboundPolicy } from "../../inbound-policy.js";
 import {
   requireAdmittedWhatsAppInboundMessage,
   requireWhatsAppInboundAdmission,
@@ -32,7 +37,8 @@ import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
 import { resolvePeerId } from "./peer.js";
-import { processMessage } from "./process-message.js";
+import { emitWhatsAppMessageReceivedHooksIfEnabled, processMessage } from "./process-message.js";
+import { finalizeInboundContext } from "./runtime-api.js";
 import {
   createWhatsAppStatusReactionController,
   type StatusReactionController,
@@ -299,6 +305,84 @@ export function createWebOnMessageHandler(params: {
       }
       await transcribeAudioOnce();
     };
+
+    const observationSender = getSenderIdentity(msg);
+
+    const observationAllowed =
+      conversationKind !== "group" ||
+      (() => {
+        const self = getSelfIdentity(msg, account.authDir);
+        const inboundPolicy = resolveWhatsAppInboundPolicy({
+          cfg,
+          accountId: admission.accountId,
+          selfE164: self.e164 ?? null,
+        });
+        const conversationGroupPolicy =
+          inboundPolicy.resolveConversationGroupPolicy(conversationId);
+
+        return !conversationGroupPolicy.allowlistEnabled || conversationGroupPolicy.allowed;
+      })();
+
+    if (observationAllowed) {
+      const observationMedia = toInboundMediaFacts(
+        msg.payload.media?.path || msg.payload.media?.url
+          ? [
+              {
+                path: msg.payload.media?.path,
+                url: msg.payload.media?.url ?? msg.payload.media?.path,
+                contentType: msg.payload.media?.type,
+              },
+            ]
+          : undefined,
+      );
+
+      const observationCtx = buildChannelInboundEventContext({
+        channel: "whatsapp",
+        finalize: finalizeInboundContext,
+        supplemental: {
+          untrustedContext: msg.payload.untrustedStructuredContext,
+        },
+        media: observationMedia,
+        messageId: msg.event.id,
+        timestamp: msg.event.timestamp,
+        from: conversationId,
+        sender: {
+          id: getPrimaryIdentityId(observationSender) ?? observationSender.e164,
+          name: observationSender.name,
+        },
+        conversation: {
+          kind: conversationKind,
+          id: conversationId,
+          label: conversationId,
+        },
+        route: {
+          agentId: route.agentId,
+          accountId: route.accountId,
+          routeSessionKey: route.sessionKey,
+        },
+        reply: {
+          to: msg.platform.recipientJid,
+          originatingTo: conversationId,
+        },
+        message: {
+          body: msg.payload.body,
+          bodyForAgent: msg.payload.body,
+          rawBody: msg.payload.body,
+          commandBody: msg.payload.body,
+        },
+        extra: {
+          GroupSubject: msg.group?.subject,
+          SenderE164: observationSender.e164,
+        },
+      });
+
+      emitWhatsAppMessageReceivedHooksIfEnabled({
+        cfg,
+        ctx: observationCtx,
+        accountId: route.accountId,
+        sessionKey: route.sessionKey,
+      });
+    }
 
     if (conversationKind === "group") {
       const sender = getSenderIdentity(msg);

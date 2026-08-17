@@ -66,6 +66,7 @@ import {
   type getChildLogger,
   type getReplyFromConfig,
   type HistoryEntry,
+  type FinalizedMsgContext,
   type LoadConfigFn,
   type resolveAgentRoute,
 } from "./runtime-api.js";
@@ -118,7 +119,7 @@ function shouldEmitWhatsAppMessageReceivedHooks(params: {
 }
 
 function emitWhatsAppMessageReceivedHooks(params: {
-  ctx: Awaited<ReturnType<typeof buildWhatsAppInboundContext>>;
+  ctx: FinalizedMsgContext;
   sessionKey: string;
 }): void {
   const canonical = deriveInboundMessageHookContext(params.ctx);
@@ -151,9 +152,9 @@ function emitWhatsAppMessageReceivedHooks(params: {
   );
 }
 
-function emitWhatsAppMessageReceivedHooksIfEnabled(params: {
+export function emitWhatsAppMessageReceivedHooksIfEnabled(params: {
   cfg: ReturnType<LoadConfigFn>;
-  ctx: Awaited<ReturnType<typeof buildWhatsAppInboundContext>>;
+  ctx: FinalizedMsgContext;
   accountId?: string;
   sessionKey: string;
 }): void {
@@ -502,12 +503,6 @@ export async function processMessage(params: {
     replyThreading,
     visibleReplyTo: visibleReplyTo ?? undefined,
     suppressMessageReceivedHooks: true,
-  });
-  emitWhatsAppMessageReceivedHooksIfEnabled({
-    cfg: params.cfg,
-    ctx: ctxPayload,
-    accountId: params.route.accountId,
-    sessionKey: params.route.sessionKey,
   });
 
   const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
