@@ -70,6 +70,7 @@ export type CanonicalInboundMessageHookContext = {
   originatingChannel?: string;
   originatingTo?: string;
   guildId?: string;
+  groupSubject?: string;
   channelName?: string;
   isGroup: boolean;
   groupId?: string;
@@ -137,6 +138,7 @@ export function deriveInboundMessageHookContext(
     ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "",
   );
   const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+  const groupSubject = readNonBlankString(ctx.GroupSubject)?.trim();
   const isGroup = Boolean(ctx.GroupSubject || ctx.GroupChannel);
   const mediaPaths = Array.isArray(ctx.MediaPaths)
     ? ctx.MediaPaths.filter(
@@ -197,6 +199,7 @@ export function deriveInboundMessageHookContext(
     originatingChannel: ctx.OriginatingChannel,
     originatingTo: ctx.OriginatingTo,
     guildId: ctx.GroupSpace,
+    groupSubject,
     channelName: ctx.GroupChannel,
     isGroup,
     groupId: isGroup ? conversationId : undefined,
@@ -486,6 +489,7 @@ export function toPluginMessageReceivedEvent(
       mediaUrls: canonical.mediaUrls,
       mediaTypes: canonical.mediaTypes,
       guildId: canonical.guildId,
+      groupSubject: canonical.groupSubject,
       channelName: canonical.channelName,
       topicName: canonical.topicName,
     },

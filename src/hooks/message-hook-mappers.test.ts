@@ -126,6 +126,32 @@ describe("message hook mappers", () => {
     expect(canonical.isGroup).toBe(true);
     expect(canonical.groupId).toBe("demo-chat:chat:456");
     expect(canonical.guildId).toBe("guild-1");
+    expect(canonical.groupSubject).toBe("ops");
+    expect(toPluginMessageReceivedEvent(canonical).metadata).toMatchObject({
+      groupSubject: "ops",
+    });
+  });
+
+  it("normalizes optional group subject without changing group detection", () => {
+    const trimmedSubject = deriveInboundMessageHookContext(
+      makeInboundCtx({ GroupSubject: "  ops  ", GroupChannel: undefined }),
+    );
+    expect(trimmedSubject.groupSubject).toBe("ops");
+    expect(trimmedSubject.isGroup).toBe(true);
+    expect(toPluginMessageReceivedEvent(trimmedSubject).metadata?.groupSubject).toBe("ops");
+
+    const groupChannelOnly = deriveInboundMessageHookContext(
+      makeInboundCtx({ GroupSubject: undefined, GroupChannel: "ops-room" }),
+    );
+    expect(groupChannelOnly.groupSubject).toBeUndefined();
+    expect(groupChannelOnly.isGroup).toBe(true);
+    expect(toPluginMessageReceivedEvent(groupChannelOnly).metadata?.groupSubject).toBeUndefined();
+
+    const noGroup = deriveInboundMessageHookContext(
+      makeInboundCtx({ GroupSubject: undefined, GroupChannel: undefined }),
+    );
+    expect(noGroup.groupSubject).toBeUndefined();
+    expect(noGroup.isGroup).toBe(false);
   });
 
   it("maps inbound reply metadata into canonical and plugin payloads", () => {
