@@ -84,6 +84,7 @@ const WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS = {
 type WhatsAppMessageReceivedHookConfig = {
   pluginHooks?: {
     messageReceived?: boolean;
+    historySyncCapture?: boolean;
   };
   accounts?: Record<string, unknown>;
 };
@@ -97,6 +98,17 @@ function readWhatsAppMessageReceivedHookOptIn(value: unknown): boolean | undefin
     return undefined;
   }
   return pluginHooks.messageReceived;
+}
+
+function readWhatsAppHistorySyncCaptureOptIn(value: unknown): boolean | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const pluginHooks = (value as WhatsAppMessageReceivedHookConfig).pluginHooks;
+  if (pluginHooks?.historySyncCapture === undefined) {
+    return undefined;
+  }
+  return pluginHooks.historySyncCapture;
 }
 
 function shouldEmitWhatsAppMessageReceivedHooks(params: {
@@ -115,6 +127,62 @@ function shouldEmitWhatsAppMessageReceivedHooks(params: {
     readWhatsAppMessageReceivedHookOptIn(accountConfig) ??
     readWhatsAppMessageReceivedHookOptIn(channelConfig) ??
     false
+  );
+}
+
+export function isWhatsAppPassiveHistorySyncCaptureEnabled(params: {
+  cfg: ReturnType<LoadConfigFn>;
+  accountId?: string;
+}): boolean {
+  const channelConfig = params.cfg.channels?.whatsapp as
+    | WhatsAppMessageReceivedHookConfig
+    | undefined;
+  const accountConfig =
+    params.accountId && channelConfig?.accounts
+      ? channelConfig.accounts[params.accountId]
+      : undefined;
+  return (
+    readWhatsAppHistorySyncCaptureOptIn(accountConfig) ??
+    readWhatsAppHistorySyncCaptureOptIn(channelConfig) ??
+    false
+  );
+}
+
+export type WhatsAppPassiveHistoryReceivedEvent = {
+  from: string;
+  content: string;
+  timestamp: number;
+  messageId: string;
+  senderId?: string;
+  metadata: Record<string, unknown>;
+};
+
+export type WhatsAppPassiveHistoryReceivedContext = {
+  channelId: "whatsapp";
+  accountId: string;
+  conversationId: string;
+  messageId: string;
+  senderId?: string;
+};
+
+export function emitWhatsAppPassiveHistoryReceivedHookIfEnabled(params: {
+  cfg: ReturnType<LoadConfigFn>;
+  accountId?: string;
+  event: WhatsAppPassiveHistoryReceivedEvent;
+  context: WhatsAppPassiveHistoryReceivedContext;
+}): void {
+  if (!isWhatsAppPassiveHistorySyncCaptureEnabled(params)) {
+    return;
+  }
+  const hookRunner = getGlobalHookRunner();
+  if (!hookRunner?.hasHooks("message_received")) {
+    return;
+  }
+  fireAndForgetBoundedHook(
+    () => hookRunner.runMessageReceived(params.event, params.context),
+    "whatsapp: passive history message_received plugin hook failed",
+    undefined,
+    WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS,
   );
 }
 

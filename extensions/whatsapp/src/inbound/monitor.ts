@@ -85,6 +85,7 @@ import {
   extractText,
   hasInboundUserContent,
 } from "./extract.js";
+import { attachWhatsAppPassiveHistorySyncCapture } from "./history-sync-capture.js";
 import { attachEmitterListener, closeInboundMonitorSocket } from "./lifecycle.js";
 import { downloadInboundMedia, downloadQuotedInboundMedia } from "./media.js";
 import {
@@ -97,6 +98,10 @@ import {
   resolveWhatsAppOutboundMentions,
   type WhatsAppOutboundMentionParticipant,
 } from "./outbound-mentions.js";
+import {
+  emitWhatsAppPassiveHistoryReceivedHookIfEnabled,
+  isWhatsAppPassiveHistorySyncCaptureEnabled,
+} from "../auto-reply/monitor/process-message.js";
 import { DisconnectReason, isJidGroup } from "./runtime-api.js";
 import { createWebSendApi } from "./send-api.js";
 import { normalizeWhatsAppSendResult } from "./send-result.js";
@@ -1668,6 +1673,28 @@ export async function attachWebInboxToSocket(
     "messages.upsert",
     handleMessagesUpsertEvent as unknown as (...args: unknown[]) => void,
   );
+  const detachPassiveHistorySync = attachWhatsAppPassiveHistorySyncCapture({
+    events: sock.ev as unknown as {
+      on: (event: string, listener: (payload: unknown) => void) => void;
+      off?: (event: string, listener: (payload: unknown) => void) => void;
+      removeListener?: (event: string, listener: (payload: unknown) => void) => void;
+    },
+    accountId: options.accountId,
+    isEnabled: () =>
+      isWhatsAppPassiveHistorySyncCaptureEnabled({
+        cfg: options.loadConfig?.() ?? options.cfg,
+        accountId: options.accountId,
+      }),
+    groupSubjectFor: (groupId) => readGroupMetadataCacheEntry(groupMetadataCache, groupId)?.subject,
+    onHistoryMessage: ({ event, context }) => {
+      emitWhatsAppPassiveHistoryReceivedHookIfEnabled({
+        cfg: options.loadConfig?.() ?? options.cfg,
+        accountId: options.accountId,
+        event,
+        context,
+      });
+    },
+  });
   const detachConnectionUpdate = attachSockListener(
     "connection.update",
     handleConnectionUpdate as unknown as (...args: unknown[]) => void,
@@ -1794,6 +1821,7 @@ export async function attachWebInboxToSocket(
     close: async () => {
       try {
         detachMessagesUpsert();
+        detachPassiveHistorySync();
         detachConnectionUpdate();
         detachGroupsUpsert();
         detachGroupsUpdate();
