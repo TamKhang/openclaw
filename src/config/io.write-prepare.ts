@@ -439,6 +439,15 @@ function normalizeAgentModelConfigForWrite(value: unknown): unknown {
       mutated = true;
     }
   }
+  if (Array.isArray(value.paidFallbacks)) {
+    const paidFallbacks = value.paidFallbacks.map((fallback) =>
+      typeof fallback === "string" ? normalizeAgentModelRefForConfig(fallback) : fallback,
+    );
+    if (!isDeepStrictEqual(paidFallbacks, value.paidFallbacks)) {
+      next.paidFallbacks = paidFallbacks;
+      mutated = true;
+    }
+  }
   return mutated ? next : value;
 }
 

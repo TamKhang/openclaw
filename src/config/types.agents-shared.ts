@@ -14,6 +14,8 @@ export type AgentModelConfig =
       primary?: string;
       /** Per-agent model fallbacks (provider/model). */
       fallbacks?: string[];
+      /** Paid/lower-priority fallbacks used only for explicitly owner-authorized generation paths. */
+      paidFallbacks?: string[];
     };
 
 /** Tool-specific model selector with an optional capability timeout override. */

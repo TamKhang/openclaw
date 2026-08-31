@@ -115,6 +115,12 @@ export type FollowupRun = {
     senderUsername?: string;
     senderE164?: string;
     senderIsOwner?: boolean;
+    /**
+     * True only when this turn carries the trusted single-use outbound group
+     * reply authorization marker (whatsapp.group.reply_once). Gates paid model
+     * fallback so background observation never escalates to paid routing.
+     */
+    explicitOwnerDelegatedReply?: boolean;
     traceAuthorized?: boolean;
     approvalReviewerDeviceId?: string;
     sessionFile: string;

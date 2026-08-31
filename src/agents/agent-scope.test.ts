@@ -1359,3 +1359,123 @@ describe("resolveAgentSkillsFilter", () => {
     expect(resolveAgentSkillsFilter(cfg, "writer")).toStrictEqual([]);
   });
 });
+
+describe("resolveEffectiveModelFallbacks paid fallback gating", () => {
+  const paidCfg: OpenClawConfig = {
+    agents: {
+      defaults: {
+        model: {
+          primary: "openrouter/free",
+          fallbacks: [
+            "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "openrouter/google/gemma-4-31b-it:free",
+          ],
+          paidFallbacks: ["openrouter/nvidia/nemotron-3-ultra-550b-a55b"],
+        },
+      },
+      list: [
+        {
+          id: "main",
+          model: {
+            fallbacks: [
+              "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+              "openrouter/google/gemma-4-31b-it:free",
+            ],
+          },
+        },
+      ],
+    },
+  };
+
+  it("does not append paid fallbacks for ordinary background observation", () => {
+    expect(
+      resolveEffectiveModelFallbacks({
+        cfg: paidCfg,
+        agentId: "main",
+        hasSessionModelOverride: false,
+      }),
+    ).toEqual([
+      "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+      "openrouter/google/gemma-4-31b-it:free",
+    ]);
+    expect(
+      resolveEffectiveModelFallbacks({
+        cfg: paidCfg,
+        agentId: "main",
+        hasSessionModelOverride: false,
+        allowPaidModelFallback: false,
+      }),
+    ).toEqual([
+      "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+      "openrouter/google/gemma-4-31b-it:free",
+    ]);
+  });
+
+  it("appends paid fallbacks after free fallbacks for explicit owner-delegated replies", () => {
+    expect(
+      resolveEffectiveModelFallbacks({
+        cfg: paidCfg,
+        agentId: "main",
+        hasSessionModelOverride: false,
+        allowPaidModelFallback: true,
+      }),
+    ).toEqual([
+      "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+      "openrouter/google/gemma-4-31b-it:free",
+      "openrouter/nvidia/nemotron-3-ultra-550b-a55b",
+    ]);
+  });
+
+  it("prefers per-agent paid fallbacks over defaults when authorized", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: {
+            fallbacks: ["openrouter/google/gemma-4-31b-it:free"],
+            paidFallbacks: ["openrouter/defaults-paid"],
+          },
+        },
+        list: [
+          {
+            id: "main",
+            model: {
+              fallbacks: ["openrouter/agent-free"],
+              paidFallbacks: ["openrouter/agent-paid"],
+            },
+          },
+        ],
+      },
+    };
+    expect(
+      resolveEffectiveModelFallbacks({
+        cfg,
+        agentId: "main",
+        hasSessionModelOverride: false,
+        allowPaidModelFallback: true,
+      }),
+    ).toEqual(["openrouter/agent-free", "openrouter/agent-paid"]);
+  });
+
+  it("returns only free fallbacks when paid fallback is authorized but not configured", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        list: [
+          {
+            id: "main",
+            model: {
+              fallbacks: ["openrouter/google/gemma-4-31b-it:free"],
+            },
+          },
+        ],
+      },
+    };
+    expect(
+      resolveEffectiveModelFallbacks({
+        cfg,
+        agentId: "main",
+        hasSessionModelOverride: false,
+        allowPaidModelFallback: true,
+      }),
+    ).toEqual(["openrouter/google/gemma-4-31b-it:free"]);
+  });
+});

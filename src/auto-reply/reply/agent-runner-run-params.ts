@@ -26,6 +26,7 @@ export function resolveModelFallbackOptions(
     hasSessionModelOverride: run.hasSessionModelOverride === true,
     modelOverrideSource: run.modelOverrideSource,
     hasAutoFallbackProvenance: run.hasAutoFallbackProvenance === true,
+    allowPaidModelFallback: run.explicitOwnerDelegatedReply === true,
   });
   return {
     cfg: config,
@@ -76,6 +77,7 @@ export function buildEmbeddedRunBaseParams(params: {
     hasSessionModelOverride: params.run.hasSessionModelOverride === true,
     modelOverrideSource: params.run.modelOverrideSource,
     hasAutoFallbackProvenance: params.run.hasAutoFallbackProvenance === true,
+    allowPaidModelFallback: params.run.explicitOwnerDelegatedReply === true,
   });
   const enforceFinalTag = resolveEnforceFinalTagWithResolver(
     params.run,

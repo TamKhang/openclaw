@@ -408,6 +408,16 @@ function normalizeAgentModelConfigForDefaults(value: unknown): unknown {
       mutated = true;
     }
   }
+  if (Array.isArray(raw.paidFallbacks)) {
+    const rawPaidFallbacks = raw.paidFallbacks;
+    const paidFallbacks = rawPaidFallbacks.map((fallback) =>
+      typeof fallback === "string" ? normalizeAgentModelRefForConfig(fallback) : fallback,
+    );
+    if (paidFallbacks.some((fallback, index) => fallback !== rawPaidFallbacks[index])) {
+      next.paidFallbacks = paidFallbacks;
+      mutated = true;
+    }
+  }
   return mutated ? next : value;
 }
 
