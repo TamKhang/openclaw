@@ -36,7 +36,6 @@ type SendDurableMessageBatchRequest = {
   durability?: string;
   requireUnknownSendReconciliation?: boolean;
   gatewayClientScopes?: readonly string[];
-  outboundGroupReplyAuthorization?: unknown;
 };
 
 type DeliverySupportRequest = {
@@ -194,35 +193,6 @@ describe("durable inbound reply delivery", () => {
     expect(mocks.sendDurableMessageBatch).toHaveBeenCalledTimes(1);
     expect(latestSendDurableMessageBatchRequest().durability).toBe("required");
     expect(latestSendDurableMessageBatchRequest().requireUnknownSendReconciliation).toBe(true);
-  });
-
-  it("forwards the trusted outbound group-reply authorization into durable delivery", async () => {
-    const authorization = {
-      capability: "whatsapp.group.reply_once" as const,
-      token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
-      groupId: "1234@g.us",
-      chatId: "1234@g.us",
-      ownerTriggerMessageId: "trigger-1",
-      quotedMessageId: "quoted-1",
-      targetParticipantId: "participant-1",
-    };
-
-    await deliverInboundReplyWithMessageSendContext({
-      cfg: {},
-      channel: "telegram",
-      agentId: "main",
-      info: { kind: "final" },
-      payload: { text: "final" },
-      outboundGroupReplyAuthorization: authorization,
-      ctxPayload: ctxPayload({
-        OriginatingTo: "chat-1",
-      }),
-    });
-
-    expect(mocks.sendDurableMessageBatch).toHaveBeenCalledTimes(1);
-    expect(latestSendDurableMessageBatchRequest().outboundGroupReplyAuthorization).toEqual(
-      authorization,
-    );
   });
 
   it("reports durable partial send failures as failed delivery", async () => {

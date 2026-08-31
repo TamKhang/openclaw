@@ -12,7 +12,6 @@ import {
   resolveOutboundDurableFinalDeliverySupport,
 } from "../../infra/outbound/deliver.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
-import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { deriveDurableFinalDeliveryRequirements } from "../message/capabilities.js";
 import { sendDurableMessageBatch } from "../message/send.js";
 import { createChannelDeliveryResultFromReceipt } from "./delivery-result.js";
@@ -37,8 +36,6 @@ export type DurableInboundReplyDeliveryParams = DurableInboundReplyDeliveryOptio
   ctxPayload: FinalizedMsgContext;
   payload: ReplyPayload;
   info: ChannelDeliveryInfo;
-  /** Trusted internal-only outbound group-reply authorization context. */
-  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 };
 
 /** Outcome of attempting durable final delivery for an inbound reply payload. */
@@ -200,7 +197,6 @@ export async function deliverInboundReplyWithMessageSendContext(
     channel,
     to,
     accountId: params.accountId,
-    outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
     payloads: [params.payload],
     threadId,
     replyToId,

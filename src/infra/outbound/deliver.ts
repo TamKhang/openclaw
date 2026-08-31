@@ -41,7 +41,6 @@ import {
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
 import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capability.js";
-import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
 import { isPreConnectNetworkError } from "../delivery-recovery.shared.js";
@@ -719,8 +718,6 @@ type DeliverOutboundPayloadsCoreParams = {
   channel: Exclude<OutboundChannel, "none">;
   to: string;
   accountId?: string;
-  /** Trusted internal-only outbound group-reply authorization context. */
-  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
   payloads: ReplyPayload[];
   replyToId?: string | null;
   replyToMode?: ReplyToMode;
@@ -1167,7 +1164,6 @@ async function applyMessageSendingHook(params: {
   replyToId?: string | null;
   threadId?: string | number | null;
   sessionKey?: string;
-  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 }): Promise<{
   cancelled: boolean;
   cancelReason?: string;
@@ -1202,9 +1198,6 @@ async function applyMessageSendingHook(params: {
         accountId: params.accountId ?? undefined,
         conversationId: params.to,
         ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-        ...(params.outboundGroupReplyAuthorization
-          ? { outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization }
-          : {}),
       },
     );
     if (sendingResult?.cancel) {
@@ -2044,7 +2037,6 @@ async function deliverOutboundPayloadsCore(
         replyToId: resolveCurrentReplyTo(deliveryPayload).replyToId,
         threadId: params.threadId,
         sessionKey: sessionKeyForInternalHooks,
-        outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
       });
       if (hookResult.cancelled) {
         const hookEffect =

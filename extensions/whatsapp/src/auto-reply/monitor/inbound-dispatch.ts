@@ -806,6 +806,16 @@ export async function dispatchWhatsAppBufferedReply(params: {
           if (!ensureExplicitOwnerReplyDeliveryAllowed()) {
             return whatsAppReplyDeliveryVisibility(false);
           }
+          if (params.msg.groupReplyOnce !== undefined) {
+            try {
+              const delivery = await deliverNormalizedPayload(normalizedDeliveryPayload, info);
+              return flushResult.delivered > 0 && !delivery.visibleReplySent
+                ? whatsAppReplyDeliveryVisibility(true)
+                : delivery;
+            } catch (error: unknown) {
+              throw markWhatsAppReplyDeliveryErrorVisibleAfterFlush(error, flushResult);
+            }
+          }
           try {
             const durable = await deliverInboundReplyWithMessageSendContext({
               cfg: params.cfg,
@@ -813,8 +823,6 @@ export async function dispatchWhatsAppBufferedReply(params: {
               accountId: params.route.accountId,
               agentId: params.route.agentId,
               ctxPayload: params.context as FinalizedMsgContext,
-              outboundGroupReplyAuthorization: (params.context as FinalizedMsgContext)
-                .OutboundGroupReplyAuthorization,
               payload: normalizedDeliveryPayload,
               info,
               to: conversationId,
