@@ -23,6 +23,7 @@ import {
 import type { WhatsAppReplyDeliveryResult } from "../deliver-reply.js";
 import { markWhatsAppVisibleDeliveryError } from "../util.js";
 import { formatGroupMembers } from "./group-members.js";
+import { formatAuthoritativeGroupReplyText } from "./group-participant-name.js";
 import {
   consumeGroupReplyOnceAuthorization,
   EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
@@ -713,7 +714,18 @@ export async function dispatchWhatsAppBufferedReply(params: {
     normalizedDeliveryPayload: DeliverableWhatsAppOutboundPayload<ReplyPayload>,
     info: ReplyDeliveryInfo,
   ): Promise<WhatsAppReplyDeliveryVisibility> => {
-    const reply = resolveSendableOutboundReplyParts(normalizedDeliveryPayload);
+    let payloadForDelivery = normalizedDeliveryPayload;
+    if (params.msg.groupReplyOnce !== undefined && payloadForDelivery.text !== undefined) {
+      payloadForDelivery = {
+        ...payloadForDelivery,
+        text: formatAuthoritativeGroupReplyText({
+          body: payloadForDelivery.text,
+          displayName: params.msg.groupReplyOnce.target.displayName,
+          otherParticipantNames: params.msg.groupReplyOnce.target.otherParticipantNames,
+        }),
+      };
+    }
+    const reply = resolveSendableOutboundReplyParts(payloadForDelivery);
     if (!reply.hasMedia && !reply.text.trim()) {
       return whatsAppReplyDeliveryVisibility(false);
     }
@@ -721,8 +733,8 @@ export async function dispatchWhatsAppBufferedReply(params: {
       return whatsAppReplyDeliveryVisibility(false);
     }
     const delivery = await params.deliverReply({
-      replyResult: normalizedDeliveryPayload,
-      normalizedReplyResult: normalizedDeliveryPayload,
+      replyResult: payloadForDelivery,
+      normalizedReplyResult: payloadForDelivery,
       msg: params.msg,
       mediaLocalRoots,
       maxMediaBytes: params.maxMediaBytes,
@@ -749,8 +761,8 @@ export async function dispatchWhatsAppBufferedReply(params: {
       return whatsAppReplyDeliveryVisibility(false);
     }
     didSendReply = true;
-    const shouldLog = normalizedDeliveryPayload.text ? true : undefined;
-    params.rememberSentText(normalizedDeliveryPayload.text, {
+    const shouldLog = payloadForDelivery.text ? true : undefined;
+    params.rememberSentText(payloadForDelivery.text, {
       combinedBody: params.context.Body as string | undefined,
       combinedBodySessionKey: params.route.sessionKey,
       logVerboseMessage: shouldLog,

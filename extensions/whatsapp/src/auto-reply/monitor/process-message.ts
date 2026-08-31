@@ -37,6 +37,7 @@ import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog } from "../loggers.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
+import { buildGroupReplyAgentBody } from "./group-participant-name.js";
 import {
   resolveVisibleWhatsAppGroupHistory,
   resolveVisibleWhatsAppReplyContext,
@@ -468,6 +469,12 @@ export async function processMessage(params: {
     params.msg.event.isBatched === true,
   );
 
+  const bodyForAgent = params.msg.groupReplyOnce
+    ? buildGroupReplyAgentBody({
+        quotedBody: params.msg.groupReplyOnce.quotedBody,
+      })
+    : msgForAgent.payload.body;
+
   // Resolve combined conversation system prompt using the group or direct surface.
   const conversationSystemPrompt =
     conversationKind === "group"
@@ -481,7 +488,7 @@ export async function processMessage(params: {
         });
 
   const ctxPayload = await buildWhatsAppInboundContext({
-    bodyForAgent: msgForAgent.payload.body,
+    bodyForAgent,
     combinedBody,
     commandBody,
     commandAuthorized,

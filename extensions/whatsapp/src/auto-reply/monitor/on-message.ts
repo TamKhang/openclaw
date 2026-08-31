@@ -30,6 +30,7 @@ import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
+import type { WhatsAppGroupMetadataResolver } from "./group-participant-name.js";
 import { updateLastRouteInBackground } from "./last-route.js";
 import { resolvePeerId } from "./peer.js";
 import { processMessage } from "./process-message.js";
@@ -47,6 +48,7 @@ export function createWebOnMessageHandler(params: {
   groupHistoryLimit: number;
   groupHistories: Map<string, GroupHistoryEntry[]>;
   groupMemberNames: Map<string, Map<string, string>>;
+  resolveGroupMetadata?: WhatsAppGroupMetadataResolver;
   echoTracker: EchoTracker;
   backgroundTasks: Set<Promise<unknown>>;
   replyResolver: typeof getReplyFromConfig;
@@ -348,6 +350,7 @@ export function createWebOnMessageHandler(params: {
         groupHistories: params.groupHistories,
         groupHistoryLimit: params.groupHistoryLimit,
         groupMemberNames: params.groupMemberNames,
+        resolveGroupMetadata: params.resolveGroupMetadata,
         logVerbose,
         replyLogger: params.replyLogger,
       });
@@ -373,6 +376,7 @@ export function createWebOnMessageHandler(params: {
           groupHistories: params.groupHistories,
           groupHistoryLimit: params.groupHistoryLimit,
           groupMemberNames: params.groupMemberNames,
+          resolveGroupMetadata: params.resolveGroupMetadata,
           logVerbose,
           replyLogger: params.replyLogger,
         });

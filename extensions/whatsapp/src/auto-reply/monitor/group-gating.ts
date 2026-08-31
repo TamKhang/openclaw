@@ -25,7 +25,14 @@ import {
   resolveInboundMentionDecision,
 } from "./group-gating.runtime.js";
 import { noteGroupMember } from "./group-members.js";
-import { authorizeExplicitOwnerGroupReply } from "./group-reply-once.js";
+import {
+  resolveAuthoritativeGroupReplyTarget,
+  type WhatsAppGroupMetadataResolver,
+} from "./group-participant-name.js";
+import {
+  authorizeExplicitOwnerGroupReply,
+  EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+} from "./group-reply-once.js";
 
 export type GroupHistoryEntry = {
   sender: string;
@@ -49,6 +56,7 @@ type ApplyGroupGatingParams = {
   groupHistories: Map<string, GroupHistoryEntry[]>;
   groupHistoryLimit: number;
   groupMemberNames: Map<string, Map<string, string>>;
+  resolveGroupMetadata?: WhatsAppGroupMetadataResolver;
   selfChatMode?: boolean;
   logVerbose: (msg: string) => void;
   replyLogger: {
@@ -178,6 +186,23 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     allowFrom: inboundPolicy.configuredAllowFrom,
   };
 
+  const inboundBody = params.msg.payload.commandBody ?? params.msg.payload.body;
+  const authoritativeAddressee =
+    inboundBody === EXPLICIT_OWNER_GROUP_REPLY_TRIGGER && params.resolveGroupMetadata
+      ? await resolveAuthoritativeGroupReplyTarget({
+          msg: params.msg,
+          authDir: params.authDir,
+          groupId: conversationId,
+          resolveGroupMetadata: params.resolveGroupMetadata,
+        }).catch((err: unknown) => {
+          params.replyLogger.warn(
+            { error: String(err), conversationId },
+            "authoritative group participant name resolution failed; falling back to nameless",
+          );
+          return { displayName: undefined, otherParticipantNames: [] };
+        })
+      : undefined;
+
   const explicitOwnerGroupReply = authorizeExplicitOwnerGroupReply({
     cfg: params.cfg,
     msg: params.msg,
@@ -185,6 +210,8 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     authDir: params.authDir,
     groupHistoryKey: params.groupHistoryKey,
     groupMemberNames: params.groupMemberNames,
+    authoritativeDisplayName: authoritativeAddressee?.displayName,
+    otherParticipantNames: authoritativeAddressee?.otherParticipantNames,
   });
   if (explicitOwnerGroupReply.status !== "not_trigger") {
     if (explicitOwnerGroupReply.status === "authorized") {

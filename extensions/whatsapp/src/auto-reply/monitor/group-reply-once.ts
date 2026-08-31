@@ -19,6 +19,7 @@ import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import { normalizeE164 } from "../../text-runtime.js";
 import type { MentionConfig } from "../mentions.js";
 import { resolveOwnerList } from "../mentions.js";
+import { readTrustedWhatsAppDisplayName } from "./group-participant-name.js";
 
 export const EXPLICIT_OWNER_GROUP_REPLY_TRIGGER = "Bruno, come in";
 // The first live event measured ~30s between authorization creation and the
@@ -32,6 +33,7 @@ export type GroupReplyOnceTarget = {
   displayName?: string;
   e164?: string;
   jid?: string;
+  otherParticipantNames?: string[];
 };
 
 export type GroupReplyOnceAuthorization = {
@@ -91,31 +93,6 @@ function resolveOwnerSenderE164(
   return sender || undefined;
 }
 
-function readNonBlankString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-const WHATSAPP_IDENTIFIER_LOOKALIKE_RE =
-  /(?:^\+?[\d\s().-]{5,}$)|@(?:s\.whatsapp\.net|lid|hosted\.lid|g\.us)$/i;
-
-function readTrustedDisplayName(value: string | null | undefined): string | undefined {
-  const trimmed = readNonBlankString(value);
-  if (!trimmed) {
-    return undefined;
-  }
-  if (trimmed.toLowerCase() === "unknown sender") {
-    return undefined;
-  }
-  if (WHATSAPP_IDENTIFIER_LOOKALIKE_RE.test(trimmed)) {
-    return undefined;
-  }
-  return trimmed;
-}
-
 function lookupRosterDisplayName(
   roster: Map<string, string> | undefined,
   key: string | null | undefined,
@@ -123,7 +100,7 @@ function lookupRosterDisplayName(
   if (!roster || !key) {
     return undefined;
   }
-  const direct = readTrustedDisplayName(roster.get(key));
+  const direct = readTrustedWhatsAppDisplayName(roster.get(key));
   if (direct) {
     return direct;
   }
@@ -134,7 +111,7 @@ function lookupRosterDisplayName(
     normalized = undefined;
   }
   if (normalized && normalized !== key) {
-    return readTrustedDisplayName(roster.get(normalized));
+    return readTrustedWhatsAppDisplayName(roster.get(normalized));
   }
   return undefined;
 }
@@ -167,13 +144,17 @@ function resolveQuotedTarget(
 }
 
 function resolveTargetDisplayName(params: {
-  msg: AdmittedWebInboundMessage;
   authDir?: string;
   groupHistoryKey: string;
   groupMemberNames: Map<string, Map<string, string>>;
   participantId: string;
   sender: WhatsAppIdentity | null;
+  authoritativeDisplayName?: string;
 }): string | undefined {
+  const authoritativeDisplayName = readTrustedWhatsAppDisplayName(params.authoritativeDisplayName);
+  if (authoritativeDisplayName) {
+    return authoritativeDisplayName;
+  }
   const roster = params.groupMemberNames.get(params.groupHistoryKey);
   if (!roster || roster.size === 0) {
     return undefined;
@@ -201,6 +182,8 @@ export function authorizeExplicitOwnerGroupReply(
     authDir?: string;
     groupHistoryKey: string;
     groupMemberNames: Map<string, Map<string, string>>;
+    authoritativeDisplayName?: string;
+    otherParticipantNames?: string[];
   },
   runtime: GroupReplyOnceRuntime = defaultGroupReplyOnceRuntime,
 ): GroupReplyOnceAuthorizeResult {
@@ -240,12 +223,12 @@ export function authorizeExplicitOwnerGroupReply(
   const now = runtime.now();
   const token = runtime.createToken();
   const targetDisplayName = resolveTargetDisplayName({
-    msg: params.msg,
     authDir: params.authDir,
     groupHistoryKey: params.groupHistoryKey,
     groupMemberNames: params.groupMemberNames,
     participantId: quoted.participantId,
     sender: quoted.sender,
+    authoritativeDisplayName: params.authoritativeDisplayName,
   });
   const authorization: GroupReplyOnceAuthorization = {
     token,
@@ -258,6 +241,9 @@ export function authorizeExplicitOwnerGroupReply(
       ...(targetDisplayName ? { displayName: targetDisplayName } : {}),
       ...(quoted.sender?.e164 ? { e164: quoted.sender.e164 } : {}),
       ...(quoted.sender?.jid ? { jid: quoted.sender.jid } : {}),
+      ...(params.otherParticipantNames?.length
+        ? { otherParticipantNames: params.otherParticipantNames }
+        : {}),
     },
     ownerTriggerMessageId,
     ownerSenderId,

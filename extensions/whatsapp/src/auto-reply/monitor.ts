@@ -1,5 +1,5 @@
 // Whatsapp plugin module implements monitor behavior.
-import type { WAMessageKey } from "baileys";
+import type { GroupMetadata, WAMessageKey } from "baileys";
 import { resolveAccountEntry } from "openclaw/plugin-sdk/account-core";
 import { CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY } from "openclaw/plugin-sdk/approval-handler-runtime";
 import { resolveInboundDebounceMs } from "openclaw/plugin-sdk/channel-inbound-debounce";
@@ -51,6 +51,7 @@ import { whatsappHeartbeatLog, whatsappLog } from "./loggers.js";
 import { buildMentionConfig } from "./mentions.js";
 import { createWebChannelStatusController } from "./monitor-state.js";
 import { createEchoTracker } from "./monitor/echo.js";
+import type { WhatsAppGroupMetadataResolver } from "./monitor/group-participant-name.js";
 import { formatWhatsAppInboundListeningLog } from "./monitor/listener-log.js";
 import { createWebOnMessageHandler } from "./monitor/on-message.js";
 import type { WebMonitorTuning } from "./types.js";
@@ -291,6 +292,27 @@ export async function monitorWebChannel(
             return meta?.participants?.length ? meta : undefined;
           },
           createListener: async ({ sock, connection: connectionLocal }) => {
+            const resolveGroupMetadata: WhatsAppGroupMetadataResolver = async (groupId) => {
+              const cached = readWhatsAppBaileysCacheEntry(baileysGroupMetaCache, groupId);
+              if (cached?.participants?.length) {
+                return cached;
+              }
+              let timeout: ReturnType<typeof setTimeout> | undefined;
+              try {
+                return await Promise.race<GroupMetadata | null>([
+                  sock.groupMetadata(groupId),
+                  new Promise<null>((resolve) => {
+                    timeout = setTimeout(() => resolve(null), 5_000);
+                  }),
+                ]);
+              } catch {
+                return null;
+              } finally {
+                if (timeout) {
+                  clearTimeout(timeout);
+                }
+              }
+            };
             const onMessage = createWebOnMessageHandler({
               cfg,
               loadConfig: loadCurrentMonitorConfig,
@@ -300,6 +322,7 @@ export async function monitorWebChannel(
               groupHistoryLimit,
               groupHistories,
               groupMemberNames,
+              resolveGroupMetadata,
               echoTracker,
               backgroundTasks: connectionLocal.backgroundTasks,
               replyResolver: activeReplyResolver,

@@ -56,6 +56,8 @@ function makeGroupReplyMessage(
 function authorize(params: {
   msg: AdmittedWebInboundMessage;
   groupMemberNames?: Map<string, Map<string, string>>;
+  authoritativeDisplayName?: string;
+  otherParticipantNames?: string[];
 }) {
   return authorizeExplicitOwnerGroupReply({
     cfg: {} as never,
@@ -66,6 +68,8 @@ function authorize(params: {
     },
     groupHistoryKey: "group@g.us",
     groupMemberNames: params.groupMemberNames ?? new Map(),
+    authoritativeDisplayName: params.authoritativeDisplayName,
+    otherParticipantNames: params.otherParticipantNames,
   });
 }
 
@@ -220,6 +224,69 @@ describe("authorizeExplicitOwnerGroupReply", () => {
     expect(result.status).toBe("authorized");
     if (result.status === "authorized") {
       expect(result.authorization.target.displayName).toBe("Nang Hong");
+    }
+  });
+
+  it("prefers authoritative metadata over the recent-sender roster", () => {
+    const roster = new Map<string, string>([[TARGET_E164, "Stale Roster Name"]]);
+    const msg = makeGroupReplyMessage();
+    const result = authorize({
+      msg,
+      groupMemberNames: new Map([["group@g.us", roster]]),
+      authoritativeDisplayName: "Nang Hong",
+      otherParticipantNames: ["Văn", "Stale Roster Name"],
+    });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBe("Nang Hong");
+      expect(result.authorization.target.otherParticipantNames).toEqual([
+        "Văn",
+        "Stale Roster Name",
+      ]);
+    }
+  });
+
+  it("reproduces R2 with an empty roster and authoritative Nang Hong", () => {
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+            lid: "155280281211126@lid",
+            name: "Văn",
+            label: "155280281211126@lid",
+          },
+        },
+      },
+    });
+    const result = authorize({
+      msg,
+      authoritativeDisplayName: "Nang Hong",
+      otherParticipantNames: ["Văn"],
+    });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.participantId).toBe(TARGET_E164);
+      expect(result.authorization.target.displayName).toBe("Nang Hong");
+      expect(result.authorization.target.otherParticipantNames).toEqual(["Văn"]);
+    }
+  });
+
+  it("does not trust an authoritative identifier as a display name", () => {
+    const msg = makeGroupReplyMessage();
+    const result = authorize({
+      msg,
+      authoritativeDisplayName: "155280281211126@lid",
+      otherParticipantNames: [],
+    });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBeUndefined();
     }
   });
 
