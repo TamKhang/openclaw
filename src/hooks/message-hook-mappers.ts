@@ -15,6 +15,7 @@ import type {
   PluginHookMessageContext,
   PluginHookMessageReceivedEvent,
   PluginHookMessageSentEvent,
+  PluginHookOutboundGroupReplyAuthorization,
 } from "../plugins/hook-message.types.js";
 import type {
   MessagePreprocessedHookContext,
@@ -75,6 +76,7 @@ export type CanonicalInboundMessageHookContext = {
   isGroup: boolean;
   groupId?: string;
   topicName?: string;
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
   trace?: DiagnosticTraceContext;
   callDepth?: number;
 };
@@ -204,6 +206,7 @@ export function deriveInboundMessageHookContext(
     isGroup,
     groupId: isGroup ? conversationId : undefined,
     topicName: ctx.TopicName,
+    outboundGroupReplyAuthorization: ctx.OutboundGroupReplyAuthorization,
   };
 }
 
@@ -298,6 +301,12 @@ export function toPluginMessageContext(
   }
   if ("replyToIsQuote" in canonical && canonical.replyToIsQuote !== undefined) {
     context.replyToIsQuote = canonical.replyToIsQuote;
+  }
+  if (
+    "outboundGroupReplyAuthorization" in canonical &&
+    canonical.outboundGroupReplyAuthorization !== undefined
+  ) {
+    context.outboundGroupReplyAuthorization = canonical.outboundGroupReplyAuthorization;
   }
   assignTraceFields(context, canonical.trace);
   if (canonical.callDepth != null) {

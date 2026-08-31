@@ -586,4 +586,25 @@ describe("message hook mappers", () => {
       groupId: "demo-chat:chat:456",
     });
   });
+
+  it("forwards the trusted outbound group reply authorization marker", () => {
+    const marker = {
+      capability: "whatsapp.group.reply_once" as const,
+      token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+      groupId: "84905113232-1552963395@g.us",
+      chatId: "84905113232-1552963395@g.us",
+      ownerTriggerMessageId: "AC8511C83F38B90CAF8464FF5C4D6F13",
+      quotedMessageId: "A50D230EEF80CFFCA9683835AAFDFCB3",
+      targetParticipantId: "89051902267555@lid",
+    };
+    const canonical = deriveInboundMessageHookContext(
+      makeInboundCtx({ OutboundGroupReplyAuthorization: marker }),
+    );
+    expect(canonical.outboundGroupReplyAuthorization).toEqual(marker);
+    expect(toPluginMessageContext(canonical).outboundGroupReplyAuthorization).toEqual(marker);
+
+    const plain = deriveInboundMessageHookContext(makeInboundCtx());
+    expect(plain.outboundGroupReplyAuthorization).toBeUndefined();
+    expect(toPluginMessageContext(plain).outboundGroupReplyAuthorization).toBeUndefined();
+  });
 });

@@ -432,6 +432,17 @@ export async function buildWhatsAppInboundContext(params: {
       TargetParticipantName: explicitReplyTarget?.displayName,
       TargetParticipantId: explicitReplyTarget?.participantId,
       OwnerTriggerMessageId: params.msg.groupReplyOnce?.ownerTriggerMessageId,
+      OutboundGroupReplyAuthorization: params.msg.groupReplyOnce
+        ? {
+            capability: "whatsapp.group.reply_once",
+            token: params.msg.groupReplyOnce.token,
+            groupId: params.msg.groupReplyOnce.groupId,
+            chatId: params.msg.groupReplyOnce.chatId,
+            ownerTriggerMessageId: params.msg.groupReplyOnce.ownerTriggerMessageId,
+            quotedMessageId: params.msg.groupReplyOnce.quotedMessageId,
+            targetParticipantId: params.msg.groupReplyOnce.target.participantId,
+          }
+        : undefined,
       ...(params.msg.payload.location ? toLocationContext(params.msg.payload.location) : {}),
     },
   });
@@ -802,6 +813,8 @@ export async function dispatchWhatsAppBufferedReply(params: {
               accountId: params.route.accountId,
               agentId: params.route.agentId,
               ctxPayload: params.context as FinalizedMsgContext,
+              outboundGroupReplyAuthorization: (params.context as FinalizedMsgContext)
+                .OutboundGroupReplyAuthorization,
               payload: normalizedDeliveryPayload,
               info,
               to: conversationId,

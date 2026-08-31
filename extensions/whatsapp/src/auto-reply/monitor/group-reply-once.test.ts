@@ -227,6 +227,28 @@ describe("consumeGroupReplyOnceAuthorization", () => {
     });
   });
 
+  it("denies an unknown authorization token", () => {
+    const msg = makeGroupReplyMessage();
+    const authorization = authorize({ msg });
+    expect(authorization.status).toBe("authorized");
+    if (authorization.status !== "authorized") {
+      return;
+    }
+
+    const unknownTokenMsg = {
+      ...msg,
+      groupReplyOnce: {
+        ...msg.groupReplyOnce,
+        token: "unknown-token-not-registered",
+      },
+    } as AdmittedWebInboundMessage;
+
+    expect(consumeGroupReplyOnceAuthorization({ msg: unknownTokenMsg })).toMatchObject({
+      status: "denied",
+      reason: "no_authorization",
+    });
+  });
+
   it("denies an expired authorization", () => {
     const msg = makeGroupReplyMessage();
     const authorization = authorizeExplicitOwnerGroupReply(
@@ -308,6 +330,115 @@ describe("consumeGroupReplyOnceAuthorization", () => {
     ).toMatchObject({
       status: "denied",
       reason: "quoted_target_mismatch",
+    });
+  });
+
+  it("denies a wrong quoted participant", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+    const wrongParticipantMsg = {
+      ...msg,
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "Can you help me with this?",
+          sender: {
+            e164: "+15550000009",
+            name: "Mallory",
+          },
+        },
+      },
+    } as AdmittedWebInboundMessage;
+
+    expect(
+      consumeGroupReplyOnceAuthorization({
+        msg: wrongParticipantMsg,
+      }),
+    ).toMatchObject({
+      status: "denied",
+      reason: "quoted_target_mismatch",
+    });
+  });
+
+  it("denies a wrong owner trigger message id", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+    const wrongTriggerMsg = {
+      ...msg,
+      event: {
+        ...msg.event,
+        id: "owner-trigger-2",
+      },
+    } as AdmittedWebInboundMessage;
+
+    expect(
+      consumeGroupReplyOnceAuthorization({
+        msg: wrongTriggerMsg,
+      }),
+    ).toMatchObject({
+      status: "denied",
+      reason: "trigger_mismatch",
+    });
+  });
+
+  it("denies a chat routing mismatch", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+    const wrongChatMsg = {
+      ...msg,
+      platform: {
+        ...msg.platform,
+        chatJid: "other-chat@g.us",
+      },
+    } as AdmittedWebInboundMessage;
+
+    expect(
+      consumeGroupReplyOnceAuthorization({
+        msg: wrongChatMsg,
+      }),
+    ).toMatchObject({
+      status: "denied",
+      reason: "chat_mismatch",
+    });
+  });
+
+  it("denies an owner identity mismatch at consume time", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+    const wrongOwnerMsg = {
+      ...msg,
+      platform: {
+        ...msg.platform,
+        sender: {
+          e164: "+15550000009",
+          name: "Stranger",
+        },
+      },
+    } as AdmittedWebInboundMessage;
+
+    expect(
+      consumeGroupReplyOnceAuthorization({
+        msg: wrongOwnerMsg,
+      }),
+    ).toMatchObject({
+      status: "denied",
+      reason: "owner_mismatch",
+    });
+  });
+
+  it("permits at most one of two racing delivery claims", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+
+    const firstClaimMsg = { ...msg } as AdmittedWebInboundMessage;
+    const secondClaimMsg = { ...msg } as AdmittedWebInboundMessage;
+    const first = consumeGroupReplyOnceAuthorization({ msg: firstClaimMsg });
+    const second = consumeGroupReplyOnceAuthorization({ msg: secondClaimMsg });
+
+    expect(first.status).toBe("authorized");
+    expect(second).toMatchObject({
+      status: "denied",
+      reason: "already_consumed",
     });
   });
 });

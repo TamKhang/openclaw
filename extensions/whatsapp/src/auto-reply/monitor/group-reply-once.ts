@@ -21,7 +21,11 @@ import type { MentionConfig } from "../mentions.js";
 import { resolveOwnerList } from "../mentions.js";
 
 export const EXPLICIT_OWNER_GROUP_REPLY_TRIGGER = "Bruno, come in";
-export const GROUP_REPLY_ONCE_TTL_MS = 30_000;
+// The first live event measured ~30s between authorization creation and the
+// completed answer (01:57:06.9Z -> 01:57:36.684Z). 120s covers tool-backed
+// answer latency with headroom while keeping the window short-lived. The TTL
+// is still re-checked at the final one-shot claim/consume before provider send.
+export const GROUP_REPLY_ONCE_TTL_MS = 120_000;
 
 export type GroupReplyOnceTarget = {
   participantId: string;
@@ -277,6 +281,11 @@ export function consumeGroupReplyOnceAuthorization(
     return { status: "denied", reason: "quoted_target_mismatch" };
   }
 
+  // Atomic single-threaded claim: every validation above completed and no
+  // await exists before this assignment, so at most one caller can observe
+  // `consumed === false`. The WhatsApp deliver path invokes this consume
+  // before the provider send; a send failure afterwards leaves the
+  // authorization consumed (fail-closed, no silent reactivation).
   authorization.consumed = true;
   return { status: "authorized", authorization };
 }

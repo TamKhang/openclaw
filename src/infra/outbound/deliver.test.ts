@@ -4478,6 +4478,55 @@ describe("deliverOutboundPayloads", () => {
     );
   });
 
+  it("forwards trusted outbound group-reply authorization into message_sending context", async () => {
+    hookMocks.runner.hasHooks.mockImplementation(
+      (hookName?: string) => hookName === "message_sending",
+    );
+    const sendText = vi.fn().mockResolvedValue({
+      channel: "matrix" as const,
+      messageId: "mx-auth",
+      roomId: "!room",
+    });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "matrix",
+            outbound: { deliveryMode: "direct", sendText },
+          }),
+        },
+      ]),
+    );
+
+    const authorization = {
+      capability: "whatsapp.group.reply_once" as const,
+      token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+      groupId: "1234@g.us",
+      chatId: "1234@g.us",
+      ownerTriggerMessageId: "trigger-1",
+      quotedMessageId: "quoted-1",
+      targetParticipantId: "participant-1",
+    };
+
+    await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room",
+      payloads: [{ text: "hello" }],
+      outboundGroupReplyAuthorization: authorization,
+    });
+
+    expect(hookMocks.runner.runMessageSending).toHaveBeenCalledTimes(1);
+    expect(hookMocks.runner.runMessageSending).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        outboundGroupReplyAuthorization: authorization,
+      }),
+    );
+  });
+
   it("forwards session.key (canonical) into message_sending ctx and never falls back to policyKey", async () => {
     // Contract test for OutboundSessionContext.key semantics:
     // session.key MUST reach plugins via ctx.sessionKey, even when a

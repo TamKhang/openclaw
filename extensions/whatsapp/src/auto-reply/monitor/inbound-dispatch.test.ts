@@ -1767,6 +1767,15 @@ describe("explicit owner group reply delivery guard", () => {
       TargetParticipantName: "Alice",
       TargetParticipantId: "+15550000002",
       OwnerTriggerMessageId: "owner-trigger-1",
+      OutboundGroupReplyAuthorization: {
+        capability: "whatsapp.group.reply_once",
+        token: expect.any(String),
+        groupId: "group@g.us",
+        chatId: "group@g.us",
+        ownerTriggerMessageId: "owner-trigger-1",
+        quotedMessageId: "quoted-1",
+        targetParticipantId: "+15550000002",
+      },
     });
   });
 });
