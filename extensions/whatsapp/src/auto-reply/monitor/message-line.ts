@@ -14,11 +14,17 @@ import {
   type EnvelopeFormatOptions,
 } from "./message-line.runtime.js";
 
-function formatReplyTarget(replyTo: WhatsAppReplyContext | null) {
+function formatReplyTarget(
+  replyTo: WhatsAppReplyContext | null,
+  explicitReplyTarget?: { displayName?: string } | null,
+) {
   if (!replyTo?.body) {
     return null;
   }
-  const sender = replyTo.sender?.label ?? replyTo.sender?.e164 ?? "unknown sender";
+  const sender =
+    explicitReplyTarget !== undefined && explicitReplyTarget !== null
+      ? (explicitReplyTarget.displayName ?? "a group member")
+      : (replyTo.sender?.name ?? replyTo.sender?.label ?? replyTo.sender?.e164 ?? "unknown sender");
   const idPart = replyTo.id ? ` id:${replyTo.id}` : "";
   return `[Replying to ${sender}${idPart}]\n${replyTo.body}\n[/Replying]`;
 }
@@ -48,7 +54,7 @@ export function buildInboundLine(params: {
   const replyContext =
     params.visibleReplyTo === undefined
       ? formatReplyContext(msg)
-      : formatReplyTarget(params.visibleReplyTo);
+      : formatReplyTarget(params.visibleReplyTo, msg.groupReplyOnce?.target);
   const baseLine = `${prefixStr}${msg.payload.body}${replyContext ? `\n\n${replyContext}` : ""}`;
   const sender = getSenderIdentity(msg);
 

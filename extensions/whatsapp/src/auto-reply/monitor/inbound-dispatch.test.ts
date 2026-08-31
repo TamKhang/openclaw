@@ -1677,7 +1677,7 @@ describe("explicit owner group reply delivery guard", () => {
         allowFrom: ["+15550000001"],
       },
       groupHistoryKey: "group@g.us",
-      groupMemberNames: new Map(),
+      groupMemberNames: new Map([["group@g.us", new Map([["+15550000002", "Alice"]])]]),
     });
     expect(result.status).toBe("authorized");
     return msg;

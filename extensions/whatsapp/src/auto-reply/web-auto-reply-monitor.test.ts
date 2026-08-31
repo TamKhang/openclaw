@@ -782,6 +782,79 @@ describe("buildInboundLine", () => {
     expect(line).toContain("[/Replying]");
   });
 
+  it("uses the explicit owner reply target name instead of a raw quote sender label", () => {
+    const line = buildInboundLine({
+      cfg: makeInboundCfg(""),
+      agentId: "main",
+      msg: {
+        ...createDirectMessage({
+          admission: {
+            conversation: {
+              id: "+1555",
+            },
+          },
+          body: "hello",
+          replyToId: "q1",
+          replyToBody: "original",
+          replyToSender: "155280281211126@lid",
+        }),
+        groupReplyOnce: {
+          target: {
+            participantId: "+84905113232",
+            displayName: "Nang Hong",
+          },
+        },
+      } as never,
+      visibleReplyTo: {
+        id: "q1",
+        body: "original",
+        sender: {
+          label: "155280281211126@lid",
+        },
+      },
+      envelope: { includeTimestamp: false },
+    });
+
+    expect(line).toContain("[Replying to Nang Hong id:q1]");
+    expect(line).not.toContain("155280281211126@lid");
+  });
+
+  it("uses a nameless reply label when the explicit owner reply target has no trusted name", () => {
+    const line = buildInboundLine({
+      cfg: makeInboundCfg(""),
+      agentId: "main",
+      msg: {
+        ...createDirectMessage({
+          admission: {
+            conversation: {
+              id: "+1555",
+            },
+          },
+          body: "hello",
+          replyToId: "q1",
+          replyToBody: "original",
+          replyToSender: "155280281211126@lid",
+        }),
+        groupReplyOnce: {
+          target: {
+            participantId: "+84905113232",
+          },
+        },
+      } as never,
+      visibleReplyTo: {
+        id: "q1",
+        body: "original",
+        sender: {
+          label: "155280281211126@lid",
+        },
+      },
+      envelope: { includeTimestamp: false },
+    });
+
+    expect(line).toContain("[Replying to a group member id:q1]");
+    expect(line).not.toContain("155280281211126@lid");
+  });
+
   it("applies the WhatsApp messagePrefix when configured", () => {
     const line = buildInboundLine({
       cfg: makeInboundCfg("[PFX]"),

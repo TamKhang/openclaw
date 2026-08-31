@@ -91,7 +91,6 @@ describe("authorizeExplicitOwnerGroupReply", () => {
       consumed: false,
       target: {
         participantId: TARGET_E164,
-        displayName: "Alice",
         e164: TARGET_E164,
       },
     });
@@ -174,6 +173,160 @@ describe("authorizeExplicitOwnerGroupReply", () => {
     expect(result.status).toBe("authorized");
     if (result.status === "authorized") {
       expect(result.authorization.target.displayName).toBe("Roster Alice");
+    }
+  });
+
+  it("resolves the roster display name for a LID quoted participant even with a stale LID label", () => {
+    const roster = new Map<string, string>([[TARGET_E164, "Nang Hong"]]);
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+            lid: "155280281211126@lid",
+            label: "155280281211126@lid",
+          },
+        },
+      },
+    });
+    const result = authorize({ msg, groupMemberNames: new Map([["group@g.us", roster]]) });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.participantId).toBe(TARGET_E164);
+      expect(result.authorization.target.displayName).toBe("Nang Hong");
+    }
+  });
+
+  it("prefers the roster human name over any quote-provided non-roster name", () => {
+    const roster = new Map<string, string>([[TARGET_E164, "Nang Hong"]]);
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+            name: "Văn",
+            label: "155280281211126@lid",
+          },
+        },
+      },
+    });
+    const result = authorize({ msg, groupMemberNames: new Map([["group@g.us", roster]]) });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBe("Nang Hong");
+    }
+  });
+
+  it("never emits a raw LID as the target display name", () => {
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+            lid: "155280281211126@lid",
+            label: "155280281211126@lid",
+          },
+        },
+      },
+    });
+    const result = authorize({ msg });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBeUndefined();
+    }
+  });
+
+  it("never emits a raw JID as the target display name", () => {
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            jid: "84905113232@s.whatsapp.net",
+          },
+        },
+      },
+    });
+    const result = authorize({ msg });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBeUndefined();
+    }
+  });
+
+  it("does not treat a phone-number-like roster value as a display name", () => {
+    const roster = new Map<string, string>([[TARGET_E164, "+84905113232"]]);
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+          },
+        },
+      },
+    });
+    const result = authorize({ msg, groupMemberNames: new Map([["group@g.us", roster]]) });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBeUndefined();
+    }
+  });
+
+  it("does not guess a name from quote metadata when no trusted roster name exists", () => {
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+            name: "Văn",
+            label: "155280281211126@lid",
+          },
+        },
+      },
+    });
+    const result = authorize({ msg });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.displayName).toBeUndefined();
+    }
+  });
+
+  it("does not select the wrong participant roster entry", () => {
+    const roster = new Map<string, string>([["+15550000009", "Mallory"]]);
+    const msg = makeGroupReplyMessage({
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "What is the weather?",
+          sender: {
+            e164: TARGET_E164,
+          },
+        },
+      },
+    });
+    const result = authorize({ msg, groupMemberNames: new Map([["group@g.us", roster]]) });
+
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.authorization.target.participantId).toBe(TARGET_E164);
+      expect(result.authorization.target.displayName).toBeUndefined();
     }
   });
 

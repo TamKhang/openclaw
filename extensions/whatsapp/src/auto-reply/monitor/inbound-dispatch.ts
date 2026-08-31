@@ -356,8 +356,9 @@ export async function buildWhatsAppInboundContext(params: {
         ? {
             id: params.visibleReplyTo.id,
             body: params.visibleReplyTo.body,
-            sender:
-              explicitReplyTarget?.displayName ?? params.visibleReplyTo.sender?.label ?? undefined,
+            sender: explicitReplyTarget
+              ? explicitReplyTarget.displayName
+              : (params.visibleReplyTo.sender?.label ?? undefined),
           }
         : explicitReplyTarget
           ? {

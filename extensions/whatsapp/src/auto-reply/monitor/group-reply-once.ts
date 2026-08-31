@@ -99,6 +99,46 @@ function readNonBlankString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+const WHATSAPP_IDENTIFIER_LOOKALIKE_RE =
+  /(?:^\+?[\d\s().-]{5,}$)|@(?:s\.whatsapp\.net|lid|hosted\.lid|g\.us)$/i;
+
+function readTrustedDisplayName(value: string | null | undefined): string | undefined {
+  const trimmed = readNonBlankString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.toLowerCase() === "unknown sender") {
+    return undefined;
+  }
+  if (WHATSAPP_IDENTIFIER_LOOKALIKE_RE.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function lookupRosterDisplayName(
+  roster: Map<string, string> | undefined,
+  key: string | null | undefined,
+): string | undefined {
+  if (!roster || !key) {
+    return undefined;
+  }
+  const direct = readTrustedDisplayName(roster.get(key));
+  if (direct) {
+    return direct;
+  }
+  let normalized: string | null | undefined;
+  try {
+    normalized = normalizeE164(key);
+  } catch {
+    normalized = undefined;
+  }
+  if (normalized && normalized !== key) {
+    return readTrustedDisplayName(roster.get(normalized));
+  }
+  return undefined;
+}
+
 function resolveQuotedTarget(
   msg: AdmittedWebInboundMessage,
   authDir?: string,
@@ -135,17 +175,17 @@ function resolveTargetDisplayName(params: {
   sender: WhatsAppIdentity | null;
 }): string | undefined {
   const roster = params.groupMemberNames.get(params.groupHistoryKey);
-  const candidates = [
-    params.sender?.name,
-    params.sender?.label,
-    params.msg.quote?.sender?.displayName,
-    roster?.get(params.participantId),
-    params.sender?.e164 ? roster?.get(params.sender.e164) : undefined,
-    params.sender?.jid ? roster?.get(params.sender.jid) : undefined,
-    params.sender?.lid ? roster?.get(params.sender.lid) : undefined,
+  if (!roster || roster.size === 0) {
+    return undefined;
+  }
+  const identityKeys = [
+    params.participantId,
+    params.sender?.e164,
+    params.sender?.jid,
+    params.sender?.lid,
   ];
-  for (const candidate of candidates) {
-    const value = readNonBlankString(candidate);
+  for (const key of identityKeys) {
+    const value = lookupRosterDisplayName(roster, key);
     if (value) {
       return value;
     }
