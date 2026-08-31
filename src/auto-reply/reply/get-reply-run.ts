@@ -1510,6 +1510,10 @@ export async function runPreparedReply(
       // Queued system events are prompt content in the same trusted session;
       // they do not rewrite the sender identity used by command/action auth.
       senderIsOwner: command.senderIsOwner,
+      // Only the trusted single-use outbound group reply marker authorizes paid
+      // model fallback. Background observation and DM paths stay free-tier.
+      explicitOwnerDelegatedReply:
+        ctx.OutboundGroupReplyAuthorization?.capability === "whatsapp.group.reply_once",
       traceAuthorized:
         command.senderIsOwner || (ctx.GatewayClientScopes ?? []).includes("operator.admin"),
       approvalReviewerDeviceId: normalizeOptionalString(ctx.ApprovalReviewerDeviceId),

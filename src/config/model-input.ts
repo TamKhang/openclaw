@@ -32,6 +32,15 @@ export function resolveAgentModelFallbackValues(model?: AgentModelInput): string
   return Array.isArray(model.fallbacks) ? model.fallbacks : [];
 }
 
+/** Returns configured paid fallback model refs, preserving their configured order. */
+export function resolveAgentModelPaidFallbackValues(model?: AgentModelInput): string[] {
+  if (!model || typeof model !== "object") {
+    return [];
+  }
+  const paidFallbacks = (model as { paidFallbacks?: unknown }).paidFallbacks;
+  return Array.isArray(paidFallbacks) ? paidFallbacks : [];
+}
+
 /** Returns a positive finite tool timeout rounded down to whole milliseconds. */
 export function resolveAgentModelTimeoutMsValue(model?: AgentToolModelConfig): number | undefined {
   if (!model || typeof model !== "object") {

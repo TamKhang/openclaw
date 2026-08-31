@@ -75,6 +75,7 @@ describe("agent-runner-utils", () => {
       hasSessionModelOverride: true,
       modelOverrideSource: "user",
       hasAutoFallbackProvenance: false,
+      allowPaidModelFallback: false,
     });
     expect(resolved).toEqual({
       cfg: run.config,
@@ -103,6 +104,7 @@ describe("agent-runner-utils", () => {
       hasSessionModelOverride: true,
       modelOverrideSource: undefined,
       hasAutoFallbackProvenance: true,
+      allowPaidModelFallback: false,
     });
     expect(resolved.fallbacksOverride).toEqual(["fallback-model"]);
   });
@@ -120,6 +122,7 @@ describe("agent-runner-utils", () => {
       hasSessionModelOverride: false,
       modelOverrideSource: undefined,
       hasAutoFallbackProvenance: false,
+      allowPaidModelFallback: false,
     });
     expect(resolved.fallbacksOverride).toEqual(["fallback-model"]);
   });
@@ -226,8 +229,37 @@ describe("agent-runner-utils", () => {
       hasSessionModelOverride: true,
       modelOverrideSource: undefined,
       hasAutoFallbackProvenance: true,
+      allowPaidModelFallback: false,
     });
     expect(resolved.modelFallbacksOverride).toEqual(["fallback-model"]);
+  });
+
+  it("enables paid model fallback only for explicit owner-delegated group replies", () => {
+    hoisted.resolveEffectiveModelFallbacksMock.mockReturnValue(["fallback-model"]);
+    const run = makeRun({ explicitOwnerDelegatedReply: true });
+
+    resolveModelFallbackOptions(run);
+
+    expect(hoisted.resolveEffectiveModelFallbacksMock).toHaveBeenCalledWith({
+      cfg: run.config,
+      agentId: run.agentId,
+      sessionKey: run.sessionKey,
+      hasSessionModelOverride: false,
+      modelOverrideSource: undefined,
+      hasAutoFallbackProvenance: false,
+      allowPaidModelFallback: true,
+    });
+  });
+
+  it("keeps paid model fallback disabled for ordinary replies", () => {
+    hoisted.resolveEffectiveModelFallbacksMock.mockReturnValue(["fallback-model"]);
+    const run = makeRun({ explicitOwnerDelegatedReply: false });
+
+    resolveModelFallbackOptions(run);
+
+    expect(hoisted.resolveEffectiveModelFallbacksMock).toHaveBeenCalledWith(
+      expect.objectContaining({ allowPaidModelFallback: false }),
+    );
   });
 
   it("does not force final-tag enforcement for minimax providers", () => {

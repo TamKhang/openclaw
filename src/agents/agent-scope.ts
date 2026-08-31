@@ -1,7 +1,10 @@
 /** Higher-level agent scope helpers for model selection, fallbacks, skills, and workspaces. */
 import fs from "node:fs";
 import path from "node:path";
-import { resolveAgentModelFallbackValues } from "../config/model-input.js";
+import {
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPaidFallbackValues,
+} from "../config/model-input.js";
 import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 export { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 import {
@@ -431,6 +434,25 @@ function resolveSelectedModelFallbacksOverride(
   return Array.isArray(raw.fallbacks) ? raw.fallbacks : undefined;
 }
 
+function resolveSelectedModelPaidFallbacksOverride(
+  raw: AgentModelConfig | undefined,
+): string[] | undefined {
+  if (!raw || typeof raw === "string") {
+    return undefined;
+  }
+  if (!Object.hasOwn(raw, "paidFallbacks")) {
+    return undefined;
+  }
+  return Array.isArray(raw.paidFallbacks) ? raw.paidFallbacks : undefined;
+}
+
+function resolveAgentModelPaidFallbacksOverride(
+  cfg: OpenClawConfig,
+  agentId: string,
+): string[] | undefined {
+  return resolveSelectedModelPaidFallbacksOverride(resolveAgentConfig(cfg, agentId)?.model);
+}
+
 function resolveFirstModelFallbacksOverride(
   candidates: Array<AgentModelConfig | undefined>,
 ): string[] | undefined {
@@ -549,6 +571,17 @@ export function hasConfiguredModelFallbacks(params: {
   return (fallbacksOverride ?? defaultFallbacks).length > 0;
 }
 
+function appendPaidFallbacks(
+  base: string[] | undefined,
+  paidFallbacks: string[],
+): string[] | undefined {
+  if (paidFallbacks.length === 0) {
+    return base;
+  }
+  const seen = new Set(base ?? []);
+  return [...(base ?? []), ...paidFallbacks.filter((ref) => !seen.has(ref))];
+}
+
 export function resolveEffectiveModelFallbacks(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -556,10 +589,21 @@ export function resolveEffectiveModelFallbacks(params: {
   hasSessionModelOverride: boolean;
   modelOverrideSource?: "auto" | "user";
   hasAutoFallbackProvenance?: boolean;
+  allowPaidModelFallback?: boolean;
 }): string[] | undefined {
   const agentFallbacksOverride = resolveAgentModelFallbacksOverride(params.cfg, params.agentId);
+  const paidFallbacks =
+    params.allowPaidModelFallback === true
+      ? (resolveAgentModelPaidFallbacksOverride(params.cfg, params.agentId) ??
+        resolveAgentModelPaidFallbackValues(params.cfg.agents?.defaults?.model))
+      : [];
   if (!params.hasSessionModelOverride) {
-    return agentFallbacksOverride;
+    const base =
+      paidFallbacks.length > 0
+        ? (agentFallbacksOverride ??
+          resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model))
+        : agentFallbacksOverride;
+    return appendPaidFallbacks(base, paidFallbacks);
   }
   const canUseConfiguredFallbacks =
     params.modelOverrideSource === "auto" ||
@@ -571,10 +615,10 @@ export function resolveEffectiveModelFallbacks(params: {
     ? resolveSubagentSpawnModelFallbacksOverride(params.cfg, params.agentId)
     : undefined;
   if (subagentFallbacksOverride !== undefined) {
-    return subagentFallbacksOverride;
+    return appendPaidFallbacks(subagentFallbacksOverride, paidFallbacks);
   }
   const defaultFallbacks = resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model);
-  return agentFallbacksOverride ?? defaultFallbacks;
+  return appendPaidFallbacks(agentFallbacksOverride ?? defaultFallbacks, paidFallbacks);
 }
 
 function normalizePathForComparison(input: string): string {

@@ -8,6 +8,7 @@ export const AgentModelSchema = z.union([
     .object({
       primary: z.string().optional(),
       fallbacks: z.array(z.string()).optional(),
+      paidFallbacks: z.array(z.string()).optional(),
     })
     .strict(),
 ]);
