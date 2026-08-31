@@ -25,6 +25,7 @@ import {
   resolveInboundMentionDecision,
 } from "./group-gating.runtime.js";
 import { noteGroupMember } from "./group-members.js";
+import { authorizeExplicitOwnerGroupReply } from "./group-reply-once.js";
 
 export type GroupHistoryEntry = {
   sender: string;
@@ -176,6 +177,29 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     ...params.baseMentionConfig,
     allowFrom: inboundPolicy.configuredAllowFrom,
   };
+
+  const explicitOwnerGroupReply = authorizeExplicitOwnerGroupReply({
+    cfg: params.cfg,
+    msg: params.msg,
+    baseMentionConfig,
+    authDir: params.authDir,
+    groupHistoryKey: params.groupHistoryKey,
+    groupMemberNames: params.groupMemberNames,
+  });
+  if (explicitOwnerGroupReply.status !== "not_trigger") {
+    if (explicitOwnerGroupReply.status === "authorized") {
+      params.msg.groupMention = { wasMentioned: true, requireMention: false };
+      params.logVerbose(
+        `Explicit owner-delegated group reply authorized for ${conversationId} (${explicitOwnerGroupReply.authorization.token})`,
+      );
+      return { shouldProcess: true };
+    }
+    return skipGroupMessageAndStoreHistory(
+      params,
+      `Explicit owner-delegated group reply denied in ${conversationId}: ${explicitOwnerGroupReply.reason}`,
+    );
+  }
+
   const mentionConfig = {
     ...buildMentionConfig(params.cfg, params.agentId, {
       provider: "whatsapp",

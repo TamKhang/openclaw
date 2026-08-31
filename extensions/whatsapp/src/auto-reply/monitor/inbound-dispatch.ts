@@ -23,6 +23,10 @@ import {
 import type { WhatsAppReplyDeliveryResult } from "../deliver-reply.js";
 import { markWhatsAppVisibleDeliveryError } from "../util.js";
 import { formatGroupMembers } from "./group-members.js";
+import {
+  consumeGroupReplyOnceAuthorization,
+  EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+} from "./group-reply-once.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 import {
   createChannelMessageReplyPipeline,
@@ -316,6 +320,9 @@ export async function buildWhatsAppInboundContext(params: {
   const conversationId = admission.conversation.id;
   const conversationKind = admission.conversation.kind;
   const wasMentioned = params.msg.groupMention?.wasMentioned ?? params.msg.wasMentioned;
+  const explicitReplyTarget = params.msg.groupReplyOnce?.target;
+  const explicitReplyQuotedMessageId = params.msg.groupReplyOnce?.quotedMessageId;
+  const explicitReplyQuotedBody = params.msg.groupReplyOnce?.quotedBody;
   const inboundHistory =
     conversationKind === "group"
       ? buildInboundHistoryFromEntries({
@@ -349,9 +356,16 @@ export async function buildWhatsAppInboundContext(params: {
         ? {
             id: params.visibleReplyTo.id,
             body: params.visibleReplyTo.body,
-            sender: params.visibleReplyTo.sender?.label ?? undefined,
+            sender:
+              explicitReplyTarget?.displayName ?? params.visibleReplyTo.sender?.label ?? undefined,
           }
-        : undefined,
+        : explicitReplyTarget
+          ? {
+              id: explicitReplyQuotedMessageId,
+              body: explicitReplyQuotedBody,
+              sender: explicitReplyTarget.displayName,
+            }
+          : undefined,
       groupSystemPrompt: params.groupSystemPrompt,
       untrustedContext: params.msg.payload.untrustedStructuredContext,
     },
@@ -415,6 +429,9 @@ export async function buildWhatsAppInboundContext(params: {
           : undefined),
       ReplyThreading: params.replyThreading,
       SuppressMessageReceivedHooks: params.suppressMessageReceivedHooks,
+      TargetParticipantName: explicitReplyTarget?.displayName,
+      TargetParticipantId: explicitReplyTarget?.participantId,
+      OwnerTriggerMessageId: params.msg.groupReplyOnce?.ownerTriggerMessageId,
       ...(params.msg.payload.location ? toLocationContext(params.msg.payload.location) : {}),
     },
   });
@@ -536,6 +553,7 @@ export function updateWhatsAppMainLastRoute(params: {
 export async function dispatchWhatsAppBufferedReply(params: {
   cfg: ReturnType<LoadConfigFn>;
   connectionId: string;
+  authDir?: string;
   context: Record<string, unknown>;
   deliverReply: (params: {
     replyResult: ReplyPayload;
@@ -618,12 +636,76 @@ export async function dispatchWhatsAppBufferedReply(params: {
   let didSendReply = false;
   let didLogHeartbeatStrip = false;
 
+  const explicitOwnerReplyDelivery = {
+    decided: false,
+    allowed: false,
+    reason: undefined as string | undefined,
+  };
+  const ensureExplicitOwnerReplyDeliveryAllowed = (): boolean => {
+    if (params.msg.groupReplyOnce === undefined) {
+      return true;
+    }
+    if (!explicitOwnerReplyDelivery.decided) {
+      const decision = consumeGroupReplyOnceAuthorization({
+        msg: params.msg,
+        authDir: params.authDir,
+      });
+      explicitOwnerReplyDelivery.decided = true;
+      explicitOwnerReplyDelivery.allowed = decision.status === "authorized";
+      explicitOwnerReplyDelivery.reason =
+        decision.status === "denied" ? decision.reason : undefined;
+      if (decision.status === "authorized") {
+        const authorization = decision.authorization;
+        params.replyLogger.info(
+          {
+            trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+            decision: "authorized",
+            result: "authorized",
+            conversationId,
+            groupId: authorization.groupId,
+            targetParticipantId: authorization.target.participantId,
+            targetDisplayName: authorization.target.displayName ?? null,
+            quotedMessageId: authorization.quotedMessageId,
+            ownerSenderId: authorization.ownerSenderId,
+            ownerTriggerMessageId: authorization.ownerTriggerMessageId,
+          },
+          "explicit owner-delegated group reply delivery authorized",
+        );
+      } else {
+        const authorization = params.msg.groupReplyOnce;
+        params.replyLogger.warn(
+          {
+            trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+            decision: "denied",
+            result: "denied",
+            reason: decision.reason,
+            conversationId,
+            groupId: authorization?.groupId ?? null,
+            targetParticipantId: authorization?.target.participantId ?? null,
+            targetDisplayName: authorization?.target.displayName ?? null,
+            quotedMessageId: authorization?.quotedMessageId ?? null,
+            ownerSenderId: authorization?.ownerSenderId ?? null,
+            ownerTriggerMessageId: authorization?.ownerTriggerMessageId ?? null,
+          },
+          "explicit owner-delegated group reply delivery denied",
+        );
+        logVerbose(
+          `Explicit owner-delegated group reply denied in ${conversationId}: ${decision.reason}`,
+        );
+      }
+    }
+    return explicitOwnerReplyDelivery.allowed;
+  };
+
   const deliverNormalizedPayload = async (
     normalizedDeliveryPayload: DeliverableWhatsAppOutboundPayload<ReplyPayload>,
     info: ReplyDeliveryInfo,
   ): Promise<WhatsAppReplyDeliveryVisibility> => {
     const reply = resolveSendableOutboundReplyParts(normalizedDeliveryPayload);
     if (!reply.hasMedia && !reply.text.trim()) {
+      return whatsAppReplyDeliveryVisibility(false);
+    }
+    if (!ensureExplicitOwnerReplyDeliveryAllowed()) {
       return whatsAppReplyDeliveryVisibility(false);
     }
     const delivery = await params.deliverReply({
@@ -710,6 +792,9 @@ export async function dispatchWhatsAppBufferedReply(params: {
         if (!reply.hasMedia) {
           const flushResult = await mediaOnlyCoalescer.flushAll();
           logWhatsAppMediaOnlyFlushResult(flushResult);
+          if (!ensureExplicitOwnerReplyDeliveryAllowed()) {
+            return whatsAppReplyDeliveryVisibility(false);
+          }
           try {
             const durable = await deliverInboundReplyWithMessageSendContext({
               cfg: params.cfg,

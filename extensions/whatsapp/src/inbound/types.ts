@@ -2,6 +2,7 @@
 import type { AnyMessageContent, MiscMessageGenerationOptions } from "baileys";
 import type { NormalizedLocation } from "openclaw/plugin-sdk/channel-inbound";
 import type { PollInput } from "openclaw/plugin-sdk/poll-runtime";
+import type { GroupReplyOnceAuthorization } from "../auto-reply/monitor/group-reply-once.js";
 import type { WhatsAppIdentity, WhatsAppReplyContext, WhatsAppSelfIdentity } from "../identity.js";
 import type { DeprecatedWebInboundAdmissionTopLevelFields } from "./admission-types.js";
 import type { WhatsAppInboundAdmission } from "./admission.js";
@@ -213,6 +214,7 @@ type WebInboundCallbackMessageCommon = {
     wasMentioned: boolean;
     requireMention: boolean;
   };
+  groupReplyOnce?: GroupReplyOnceAuthorization;
 };
 
 type WebInboundCallbackAdmissionFields =

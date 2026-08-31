@@ -1,6 +1,10 @@
 // Whatsapp tests cover inbound dispatch plugin behavior.
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
+import {
+  authorizeExplicitOwnerGroupReply,
+  resetGroupReplyOnceForTests,
+} from "./group-reply-once.js";
 
 let capturedDispatchParams: unknown;
 
@@ -1626,5 +1630,143 @@ describe("whatsapp inbound dispatch", () => {
         normalizeE164: () => null,
       }),
     ).toBe("+15550003333");
+  });
+});
+
+describe("explicit owner group reply delivery guard", () => {
+  beforeEach(() => {
+    resetGroupReplyOnceForTests();
+  });
+
+  function authorizeGroupReplyMsg(): TestMsg {
+    const msg = makeMsg({
+      admission: groupAdmission("group@g.us"),
+      event: {
+        id: "owner-trigger-1",
+      },
+      payload: {
+        body: "Bruno, come in",
+      },
+      platform: {
+        chatJid: "group@g.us",
+        recipientJid: "bot@s.whatsapp.net",
+        sender: {
+          e164: "+15550000001",
+          name: "Owner",
+        },
+        self: {
+          e164: "+15550000000",
+        },
+      },
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "Can you help me with this?",
+          sender: {
+            e164: "+15550000002",
+            name: "Alice",
+          },
+        },
+      },
+    });
+    const result = authorizeExplicitOwnerGroupReply({
+      cfg: {} as never,
+      msg,
+      baseMentionConfig: {
+        mentionRegexes: [],
+        allowFrom: ["+15550000001"],
+      },
+      groupHistoryKey: "group@g.us",
+      groupMemberNames: new Map(),
+    });
+    expect(result.status).toBe("authorized");
+    return msg;
+  }
+
+  it("permits exactly one explicit owner reply and denies a second visible send", async () => {
+    const msg = authorizeGroupReplyMsg();
+    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
+    dispatchReplyWithBufferedBlockDispatcherMock
+      .mockImplementationOnce(async (params: CapturedDispatchParams) => {
+        capturedDispatchParams = params;
+        await params.dispatcherOptions?.deliver?.({ text: "Answer for Alice" }, { kind: "final" });
+        return { queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } };
+      })
+      .mockImplementationOnce(async (params: CapturedDispatchParams) => {
+        capturedDispatchParams = params;
+        await params.dispatcherOptions?.deliver?.({ text: "Second answer" }, { kind: "final" });
+        return { queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } };
+      });
+
+    await expect(
+      dispatchBufferedReply({
+        msg,
+        deliverReply,
+        context: { Body: "hi", ChatType: "group" },
+      }),
+    ).resolves.toBe(true);
+    expect(deliverReply).toHaveBeenCalledTimes(1);
+
+    await expect(
+      dispatchBufferedReply({
+        msg,
+        deliverReply,
+        context: { Body: "hi", ChatType: "group" },
+      }),
+    ).resolves.toBe(false);
+    expect(deliverReply).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies an explicit owner reply when the active group mismatches", async () => {
+    const msg = authorizeGroupReplyMsg();
+    const wrongGroupMsg = {
+      ...msg,
+      admission: {
+        ...msg.admission,
+        conversation: {
+          ...msg.admission.conversation,
+          id: "other@g.us",
+        },
+      },
+    } as TestMsg;
+    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
+    dispatchReplyWithBufferedBlockDispatcherMock.mockImplementationOnce(
+      async (params: CapturedDispatchParams) => {
+        capturedDispatchParams = params;
+        await params.dispatcherOptions?.deliver?.({ text: "Answer for Alice" }, { kind: "final" });
+        return { queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } };
+      },
+    );
+
+    await expect(
+      dispatchBufferedReply({
+        msg: wrongGroupMsg,
+        deliverReply,
+        context: { Body: "hi", ChatType: "group" },
+      }),
+    ).resolves.toBe(false);
+    expect(deliverReply).not.toHaveBeenCalled();
+  });
+
+  it("projects the explicit reply target name into finalized prompt context", async () => {
+    const msg = authorizeGroupReplyMsg();
+    const ctx = await buildWhatsAppInboundContext({
+      combinedBody: "Owner: Bruno, come in",
+      groupHistory: [],
+      groupMemberRoster: new Map(),
+      msg,
+      route: makeRoute({ sessionKey: "agent:main:whatsapp:group:group@g.us" }),
+      sender: {
+        name: "Owner",
+        e164: "+15550000001",
+      },
+    });
+
+    expectRecordFields(requireRecord(ctx, "inbound context"), {
+      ReplyToSender: "Alice",
+      TargetParticipantName: "Alice",
+      TargetParticipantId: "+15550000002",
+      OwnerTriggerMessageId: "owner-trigger-1",
+    });
   });
 });

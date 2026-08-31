@@ -583,6 +583,7 @@ export async function processMessage(params: {
           dispatchWhatsAppBufferedReply({
             cfg: params.cfg,
             connectionId: params.connectionId,
+            authDir: account.authDir,
             context: ctxPayload,
             deliverReply: deliverWebReply,
             groupHistories: params.groupHistories,
