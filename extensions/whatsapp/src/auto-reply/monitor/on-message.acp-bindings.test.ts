@@ -12,6 +12,7 @@ const updateLastRouteInBackgroundMock = vi.hoisted(() => vi.fn());
 const transcribeFirstAudioMock = vi.hoisted(() => vi.fn());
 const maybeSendAckReactionMock = vi.hoisted(() => vi.fn());
 const createStatusReactionControllerMock = vi.hoisted(() => vi.fn());
+const emitPreGateGroupObservationMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("openclaw/plugin-sdk/conversation-binding-runtime", () => ({
   resolveConfiguredBindingRoute: (...args: unknown[]) => resolveConfiguredBindingRouteMock(...args),
@@ -64,6 +65,11 @@ vi.mock("./group-gating.js", () => ({
 
 vi.mock("./last-route.js", () => ({
   updateLastRouteInBackground: (...args: unknown[]) => updateLastRouteInBackgroundMock(...args),
+}));
+
+vi.mock("./pre-gate-observation.js", () => ({
+  emitPreGateWhatsAppGroupObservation: (...args: unknown[]) =>
+    emitPreGateGroupObservationMock(...args),
 }));
 
 vi.mock("./process-message.js", () => ({

@@ -27,6 +27,7 @@ const ackReactionHandle = {
   remove: vi.fn(async () => undefined),
 };
 const applyGroupGatingMock = vi.fn();
+const emitPreGateGroupObservationMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("./audio-preflight.runtime.js", () => ({
   transcribeFirstAudio: (...args: unknown[]) => transcribeFirstAudioMock(...args),
@@ -38,6 +39,11 @@ vi.mock("./ack-reaction.js", () => ({
 
 vi.mock("./process-message.js", () => ({
   processMessage: (...args: unknown[]) => processMessageMock(...args),
+}));
+
+vi.mock("./pre-gate-observation.js", () => ({
+  emitPreGateWhatsAppGroupObservation: (...args: unknown[]) =>
+    emitPreGateGroupObservationMock(...args),
 }));
 
 vi.mock("./broadcast.js", () => ({

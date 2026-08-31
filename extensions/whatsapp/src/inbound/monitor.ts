@@ -90,6 +90,7 @@ import {
   normalizeWebInboundMessage,
   withDeprecatedWebInboundMessageFlatAliases,
 } from "./message-aliases.js";
+import { emitBlockedWhatsAppGroupObservation } from "./observation.js";
 import {
   addWhatsAppOutboundMentionsToContent,
   mayContainWhatsAppOutboundMention,
@@ -1054,6 +1055,21 @@ export async function attachWebInboxToSocket(
       remoteJid,
     });
     if (!access.allowed) {
+      if (group) {
+        emitBlockedWhatsAppGroupObservation({
+          cfg: accessCfg,
+          accountId: options.accountId,
+          selfE164: self.e164 ?? null,
+          body: (extractText(msg.message ?? undefined) ?? "").trim() || "[whatsapp message]",
+          id,
+          remoteJid,
+          participantJid,
+          senderE164,
+          groupSubject,
+          messageTimestampMs,
+          pushName: msg.pushName ?? undefined,
+        });
+      }
       return null;
     }
 

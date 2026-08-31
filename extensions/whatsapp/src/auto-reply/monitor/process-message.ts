@@ -99,7 +99,7 @@ function readWhatsAppMessageReceivedHookOptIn(value: unknown): boolean | undefin
   return pluginHooks.messageReceived;
 }
 
-function shouldEmitWhatsAppMessageReceivedHooks(params: {
+export function shouldEmitWhatsAppMessageReceivedHooks(params: {
   cfg: ReturnType<LoadConfigFn>;
   accountId?: string;
 }): boolean {
@@ -118,7 +118,7 @@ function shouldEmitWhatsAppMessageReceivedHooks(params: {
   );
 }
 
-function emitWhatsAppMessageReceivedHooks(params: {
+export function emitWhatsAppMessageReceivedHooks(params: {
   ctx: Awaited<ReturnType<typeof buildWhatsAppInboundContext>>;
   sessionKey: string;
 }): void {
@@ -214,6 +214,10 @@ export async function processMessage(params: {
   ackAlreadySent?: boolean;
   ackReaction?: AckReactionHandle | null;
   statusReactionController?: StatusReactionController | null;
+  /** When true, the caller already emitted the WhatsApp `message_received`
+   * observation hook (for example, pre-group-gating). This avoids emitting the
+   * same hook twice for a message that is later admitted to normal dispatch. */
+  messageReceivedEmitted?: boolean;
   /** Pre-computed audio transcript from a caller-level preflight, used to avoid
    * re-transcribing the same voice note once per broadcast agent.
    * - string  → transcript obtained; use it directly, skip internal STT
@@ -510,12 +514,14 @@ export async function processMessage(params: {
     visibleReplyTo: visibleReplyTo ?? undefined,
     suppressMessageReceivedHooks: true,
   });
-  emitWhatsAppMessageReceivedHooksIfEnabled({
-    cfg: params.cfg,
-    ctx: ctxPayload,
-    accountId: params.route.accountId,
-    sessionKey: params.route.sessionKey,
-  });
+  if (params.messageReceivedEmitted !== true) {
+    emitWhatsAppMessageReceivedHooksIfEnabled({
+      cfg: params.cfg,
+      ctx: ctxPayload,
+      accountId: params.route.accountId,
+      sessionKey: params.route.sessionKey,
+    });
+  }
 
   const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
     cfg: params.cfg,
