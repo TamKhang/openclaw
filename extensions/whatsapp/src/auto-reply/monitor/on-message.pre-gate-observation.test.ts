@@ -152,7 +152,7 @@ function makeEchoTracker() {
   };
 }
 
-function makeHandler() {
+function makeHandler(overrides: { replyResolver?: ReturnType<typeof vi.fn> } = {}) {
   return createWebOnMessageHandler({
     cfg: {} as never,
     verbose: false,
@@ -163,7 +163,7 @@ function makeHandler() {
     groupMemberNames: new Map(),
     echoTracker: makeEchoTracker() as never,
     backgroundTasks: new Set(),
-    replyResolver: vi.fn() as never,
+    replyResolver: (overrides.replyResolver ?? vi.fn()) as never,
     replyLogger: {
       info: () => {},
       warn: () => {},
@@ -211,6 +211,108 @@ describe("createWebOnMessageHandler pre-gating WhatsApp observation", () => {
     expect(createStatusReactionControllerMock).not.toHaveBeenCalled();
     expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
     expect(processMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("observes a non-owner exact trigger without starting a turn or send", async () => {
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: false });
+    const msg = makeGroupMessage();
+    msg.payload.body = "Bruno, come in";
+    msg.payload.commandBody = "Bruno, come in";
+    const handler = makeHandler();
+
+    await handler(msg);
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).not.toHaveBeenCalled();
+    expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps pre-gate observation unchanged when reply authorization is attached", async () => {
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: false });
+    const replyResolver = vi.fn();
+    const handler = makeHandler({ replyResolver });
+    const msg = makeGroupMessage();
+    msg.groupReplyOnce = {
+      token: "token-1",
+      delegationId: "delegation-1",
+      sourceEventId: "source-1",
+      triggerVersion: "owner_group_reply_trigger:v0.1",
+      groupId: "1203630@g.us",
+      chatId: "1203630@g.us",
+      quotedMessageId: "quoted-1",
+      quotedBody: "original",
+      target: { participantId: "+15550000002" },
+      ownerTriggerMessageId: "trigger-1",
+      ownerSenderId: "+15550000001",
+      createdAt: 1,
+      expiresAt: 2,
+      maxSends: 1,
+      consumed: false,
+    } as never;
+
+    await handler(msg);
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).not.toHaveBeenCalled();
+    expect(replyResolver).not.toHaveBeenCalled();
+  });
+
+  it("keeps pre-gate observation unchanged when no reply feature flag is present", async () => {
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: false });
+    const handler = makeHandler();
+
+    await handler(makeGroupMessage());
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("emits observation before a provider/reasoning failure and does not let it roll back", async () => {
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: true });
+    processMessageMock.mockRejectedValueOnce(new Error("provider unavailable"));
+    const handler = makeHandler();
+
+    await expect(handler(makeGroupMessage())).rejects.toThrow("provider unavailable");
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("causes zero model/reply invocations for ordinary passive group traffic", async () => {
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: false });
+    const replyResolver = vi.fn();
+    const handler = makeHandler({ replyResolver });
+
+    await handler(makeGroupMessage());
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).not.toHaveBeenCalled();
+    expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
+    expect(replyResolver).not.toHaveBeenCalled();
+  });
+
+  it("isolates observation store failure without minting authority or starting dispatch", async () => {
+    emitPreGateGroupObservationMock.mockRejectedValueOnce(new Error("observation store down"));
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: false });
+    const handler = makeHandler();
+
+    await handler(makeGroupMessage());
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(applyGroupGatingMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).not.toHaveBeenCalled();
+    expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps interactive dispatch available when observation persistence fails", async () => {
+    emitPreGateGroupObservationMock.mockRejectedValueOnce(new Error("observation store down"));
+    applyGroupGatingMock.mockResolvedValue({ shouldProcess: true });
+    const handler = makeHandler();
+
+    await handler(makeGroupMessage());
+
+    expect(emitPreGateGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).toHaveBeenCalledTimes(1);
   });
 
   it("emits group observation exactly once and continues normal dispatch for a mentioned group message", async () => {
