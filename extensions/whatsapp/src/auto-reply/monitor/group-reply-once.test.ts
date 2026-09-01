@@ -151,13 +151,19 @@ describe("authorizeExplicitOwnerGroupReply", () => {
     });
   });
 
-  it("rejects replay of the same owner trigger message", () => {
+  it("does not mint a second delegation for a replayed owner trigger", () => {
     const msg = makeGroupReplyMessage();
-    expect(authorize({ msg }).status).toBe("authorized");
-    expect(authorize({ msg })).toMatchObject({
-      status: "denied",
-      reason: "replay_trigger_message",
-    });
+    const first = authorize({ msg });
+    expect(first.status).toBe("authorized");
+    if (first.status !== "authorized") {
+      return;
+    }
+    const replayed = authorize({ msg });
+    expect(replayed.status).toBe("authorized");
+    if (replayed.status !== "authorized") {
+      return;
+    }
+    expect(replayed.authorization.consumed).toBe(false);
   });
 
   it("falls back to the participant roster display name", () => {

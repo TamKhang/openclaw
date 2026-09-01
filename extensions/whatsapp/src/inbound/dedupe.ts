@@ -1,15 +1,35 @@
 // Whatsapp plugin module implements dedupe behavior.
 import { createClaimableDedupe } from "openclaw/plugin-sdk/persistent-dedupe";
+import type { ClaimableDedupe } from "openclaw/plugin-sdk/persistent-dedupe";
+import { getOptionalWhatsAppRuntime } from "../runtime.js";
 
 export const WHATSAPP_INBOUND_DEDUPE_TTL_MS = 20 * 60_000;
 const RECENT_WEB_MESSAGE_MAX = 5000;
 const RECENT_OUTBOUND_MESSAGE_TTL_MS = 20 * 60_000;
 const RECENT_OUTBOUND_MESSAGE_MAX = 5000;
 
-const claimableInboundMessages = createClaimableDedupe({
-  ttlMs: WHATSAPP_INBOUND_DEDUPE_TTL_MS,
-  memoryMaxSize: RECENT_WEB_MESSAGE_MAX,
-});
+let claimableInboundMessages: ClaimableDedupe | undefined;
+
+function resolveClaimableInboundMessages(): ClaimableDedupe {
+  if (claimableInboundMessages) {
+    return claimableInboundMessages;
+  }
+  const runtime = getOptionalWhatsAppRuntime();
+  claimableInboundMessages = runtime
+    ? createClaimableDedupe({
+        ttlMs: WHATSAPP_INBOUND_DEDUPE_TTL_MS,
+        memoryMaxSize: RECENT_WEB_MESSAGE_MAX,
+        pluginId: "whatsapp",
+        namespacePrefix: "whatsapp_inbound_memo",
+        stateMaxEntries: RECENT_WEB_MESSAGE_MAX,
+      })
+    : createClaimableDedupe({
+        ttlMs: WHATSAPP_INBOUND_DEDUPE_TTL_MS,
+        memoryMaxSize: RECENT_WEB_MESSAGE_MAX,
+      });
+  return claimableInboundMessages;
+}
+
 const recentOutboundMessages = createRecentMessageCache({
   ttlMs: RECENT_OUTBOUND_MESSAGE_TTL_MS,
   maxSize: RECENT_OUTBOUND_MESSAGE_MAX,
@@ -91,7 +111,8 @@ function buildMessageKey(params: {
 }
 
 export function resetWebInboundDedupe(): void {
-  claimableInboundMessages.clearMemory();
+  resolveClaimableInboundMessages().clearMemory();
+  claimableInboundMessages = undefined;
   recentOutboundMessages.clear();
 }
 
@@ -100,16 +121,16 @@ type RecentInboundMessageClaimKind = "claimed" | "duplicate" | "inflight";
 export async function claimRecentInboundMessageDelivery(
   key: string,
 ): Promise<RecentInboundMessageClaimKind> {
-  const claim = await claimableInboundMessages.claim(key);
+  const claim = await resolveClaimableInboundMessages().claim(key);
   return claim.kind;
 }
 
 export async function commitRecentInboundMessage(key: string): Promise<void> {
-  await claimableInboundMessages.commit(key);
+  await resolveClaimableInboundMessages().commit(key);
 }
 
 export function releaseRecentInboundMessage(key: string, error?: unknown): void {
-  claimableInboundMessages.release(key, { error });
+  resolveClaimableInboundMessages().release(key, { error });
 }
 
 export function rememberRecentOutboundMessage(params: {

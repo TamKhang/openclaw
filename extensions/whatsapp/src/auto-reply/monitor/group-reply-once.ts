@@ -15,11 +15,18 @@ import {
   type WhatsAppIdentity,
 } from "../../identity.js";
 import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
+import { resolveWhatsAppInboundEventIdentity } from "../../inbound/inbound-event-identity.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import { normalizeE164 } from "../../text-runtime.js";
 import type { MentionConfig } from "../mentions.js";
 import { resolveOwnerList } from "../mentions.js";
 import { readTrustedWhatsAppDisplayName } from "./group-participant-name.js";
+import {
+  GROUP_REPLY_TRIGGER_VERSION,
+  resetGroupReplyDelegationStoreForTests,
+  resolveGroupReplyDelegationStore,
+} from "./group-reply-delegation-store.js";
+import type { GroupReplyOnceAuthorization } from "./group-reply-delegation.types.js";
 
 export const EXPLICIT_OWNER_GROUP_REPLY_TRIGGER = "Bruno, come in";
 // The first live event measured ~30s between authorization creation and the
@@ -28,27 +35,10 @@ export const EXPLICIT_OWNER_GROUP_REPLY_TRIGGER = "Bruno, come in";
 // is still re-checked at the final one-shot claim/consume before provider send.
 export const GROUP_REPLY_ONCE_TTL_MS = 120_000;
 
-export type GroupReplyOnceTarget = {
-  participantId: string;
-  displayName?: string;
-  e164?: string;
-  jid?: string;
-  otherParticipantNames?: string[];
-};
-
-export type GroupReplyOnceAuthorization = {
-  token: string;
-  groupId: string;
-  chatId: string;
-  quotedMessageId: string;
-  quotedBody: string;
-  target: GroupReplyOnceTarget;
-  ownerTriggerMessageId: string;
-  ownerSenderId: string;
-  createdAt: number;
-  expiresAt: number;
-  consumed: boolean;
-};
+export type {
+  GroupReplyOnceAuthorization,
+  GroupReplyOnceTarget,
+} from "./group-reply-delegation.types.js";
 
 export type GroupReplyOnceAuthorizeResult =
   | { status: "not_trigger" }
@@ -78,12 +68,8 @@ const defaultGroupReplyOnceRuntime: GroupReplyOnceRuntime = {
   createToken: () => randomUUID(),
 };
 
-const authorizationsByToken = new Map<string, GroupReplyOnceAuthorization>();
-const tokenByTriggerMessageId = new Map<string, string>();
-
 export function resetGroupReplyOnceForTests() {
-  authorizationsByToken.clear();
-  tokenByTriggerMessageId.clear();
+  resetGroupReplyDelegationStoreForTests();
 }
 
 function resolveOwnerE164s(
@@ -209,8 +195,10 @@ export function authorizeExplicitOwnerGroupReply(
   if (!ownerTriggerMessageId) {
     return { status: "denied", reason: "missing_trigger_message_id" };
   }
-  if (tokenByTriggerMessageId.has(ownerTriggerMessageId)) {
-    return { status: "denied", reason: "replay_trigger_message" };
+
+  const identity = resolveWhatsAppInboundEventIdentity(params.msg);
+  if (identity.status !== "resolved") {
+    return { status: "denied", reason: `unstable_source_event_identity:${identity.reason}` };
   }
 
   const ownerSenderId = resolveOwnerSenderE164(params.msg, params.authDir);
@@ -241,6 +229,9 @@ export function authorizeExplicitOwnerGroupReply(
   });
   const authorization: GroupReplyOnceAuthorization = {
     token,
+    delegationId: token,
+    sourceEventId: identity.sourceEventId,
+    triggerVersion: GROUP_REPLY_TRIGGER_VERSION,
     groupId,
     chatId,
     quotedMessageId: quoted.quotedMessageId,
@@ -258,11 +249,27 @@ export function authorizeExplicitOwnerGroupReply(
     ownerSenderId,
     createdAt: now,
     expiresAt: now + GROUP_REPLY_ONCE_TTL_MS,
+    maxSends: 1,
     consumed: false,
   };
 
-  authorizationsByToken.set(token, authorization);
-  tokenByTriggerMessageId.set(ownerTriggerMessageId, token);
+  const store = resolveGroupReplyDelegationStore();
+  const created = store.createIfAbsent(identity.sourceEventId, authorization);
+  if (!created) {
+    const existing = store.findBySourceEventId(identity.sourceEventId);
+    if (!existing) {
+      return { status: "denied", reason: "replay_trigger_message" };
+    }
+    if (existing.consumed) {
+      return { status: "denied", reason: "replay_trigger_message" };
+    }
+    if (now >= existing.expiresAt) {
+      return { status: "denied", reason: "replay_trigger_message" };
+    }
+    params.msg.groupReplyOnce = existing;
+    return { status: "authorized", authorization: existing };
+  }
+
   params.msg.groupReplyOnce = authorization;
   return { status: "authorized", authorization };
 }
@@ -276,33 +283,43 @@ export function consumeGroupReplyOnceAuthorization(
 ): GroupReplyOnceConsumeResult {
   const admission = requireWhatsAppInboundAdmission(params.msg);
   const ownerTriggerMessageId = params.msg.event.id;
-  const token =
-    params.msg.groupReplyOnce?.token ??
-    (ownerTriggerMessageId ? tokenByTriggerMessageId.get(ownerTriggerMessageId) : undefined);
-  if (!token) {
+  if (!ownerTriggerMessageId) {
     return { status: "denied", reason: "no_authorization" };
   }
-  const authorization = authorizationsByToken.get(token);
-  if (!authorization) {
+
+  const store = resolveGroupReplyDelegationStore();
+  const token = params.msg.groupReplyOnce?.token;
+  let sourceEventId = params.msg.groupReplyOnce?.sourceEventId;
+  if (!sourceEventId) {
+    const identity = resolveWhatsAppInboundEventIdentity(params.msg);
+    if (identity.status !== "resolved") {
+      return { status: "denied", reason: "no_authorization" };
+    }
+    sourceEventId = identity.sourceEventId;
+  }
+
+  const durable = sourceEventId ? store.findBySourceEventId(sourceEventId) : undefined;
+  if (!token || !durable || durable.token !== token) {
     return { status: "denied", reason: "no_authorization" };
   }
-  if (authorization.consumed) {
+
+  if (durable.consumed) {
     return { status: "denied", reason: "already_consumed" };
   }
-  if (runtime.now() >= authorization.expiresAt) {
+  if (runtime.now() >= durable.expiresAt) {
     return { status: "denied", reason: "expired" };
   }
-  if (authorization.groupId !== admission.conversation.id) {
+  if (durable.groupId !== admission.conversation.id) {
     return { status: "denied", reason: "group_mismatch" };
   }
-  if (authorization.ownerTriggerMessageId !== ownerTriggerMessageId) {
+  if (durable.ownerTriggerMessageId !== ownerTriggerMessageId) {
     return { status: "denied", reason: "trigger_mismatch" };
   }
   const currentOwnerSenderId = resolveOwnerSenderE164(params.msg, params.authDir);
-  if (!currentOwnerSenderId || currentOwnerSenderId !== authorization.ownerSenderId) {
+  if (!currentOwnerSenderId || currentOwnerSenderId !== durable.ownerSenderId) {
     return { status: "denied", reason: "owner_mismatch" };
   }
-  if (authorization.chatId !== (params.msg.platform.chatJid || admission.conversation.id)) {
+  if (durable.chatId !== (params.msg.platform.chatJid || admission.conversation.id)) {
     return { status: "denied", reason: "chat_mismatch" };
   }
   const quoted = resolveQuotedTarget(params.msg, params.authDir);
@@ -310,21 +327,23 @@ export function consumeGroupReplyOnceAuthorization(
     return { status: "denied", reason: `quoted_target_${quoted.error}` };
   }
   if (
-    quoted.quotedMessageId !== authorization.quotedMessageId ||
-    quoted.participantId !== authorization.target.participantId
+    quoted.quotedMessageId !== durable.quotedMessageId ||
+    quoted.participantId !== durable.target.participantId
   ) {
     return { status: "denied", reason: "quoted_target_mismatch" };
   }
 
-  // Atomic single-threaded claim: every validation above completed and no
-  // await exists before this assignment, so at most one caller can observe
-  // `consumed === false`. The WhatsApp deliver path invokes this consume
-  // before the provider send; a send failure afterwards leaves the
-  // authorization consumed (fail-closed, no silent reactivation).
-  authorization.consumed = true;
-  return { status: "authorized", authorization };
+  // Atomic durable claim: the store flips consumed in its transactional
+  // update so at most one caller can observe `consumed === false`. The
+  // WhatsApp deliver path invokes this consume before the provider send; a
+  // send failure afterwards leaves the delegation consumed (fail-closed).
+  const claimed = store.claim(sourceEventId, runtime.now());
+  if (claimed.status !== "authorized") {
+    return claimed;
+  }
+  params.msg.groupReplyOnce = claimed.authorization;
+  return { status: "authorized", authorization: claimed.authorization };
 }
-
 export function createExplicitOwnerReplyDeliveryGate(params: {
   msg: AdmittedWebInboundMessage;
   authDir?: string;
