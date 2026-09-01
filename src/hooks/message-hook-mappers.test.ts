@@ -125,7 +125,11 @@ describe("message hook mappers", () => {
     expect(canonical.messageId).toBe("msg-1");
     expect(canonical.isGroup).toBe(true);
     expect(canonical.groupId).toBe("demo-chat:chat:456");
+    expect(canonical.groupSubject).toBe("ops");
     expect(canonical.guildId).toBe("guild-1");
+    expect(toPluginMessageReceivedEvent(canonical).metadata).toMatchObject({
+      groupSubject: "ops",
+    });
   });
 
   it("maps inbound reply metadata into canonical and plugin payloads", () => {

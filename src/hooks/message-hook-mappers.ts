@@ -71,6 +71,7 @@ export type CanonicalInboundMessageHookContext = {
   originatingTo?: string;
   guildId?: string;
   channelName?: string;
+  groupSubject?: string;
   isGroup: boolean;
   groupId?: string;
   topicName?: string;
@@ -198,6 +199,7 @@ export function deriveInboundMessageHookContext(
     originatingTo: ctx.OriginatingTo,
     guildId: ctx.GroupSpace,
     channelName: ctx.GroupChannel,
+    groupSubject: ctx.GroupSubject,
     isGroup,
     groupId: isGroup ? conversationId : undefined,
     topicName: ctx.TopicName,
@@ -487,6 +489,7 @@ export function toPluginMessageReceivedEvent(
       mediaTypes: canonical.mediaTypes,
       guildId: canonical.guildId,
       channelName: canonical.channelName,
+      groupSubject: canonical.groupSubject,
       topicName: canonical.topicName,
     },
   };
