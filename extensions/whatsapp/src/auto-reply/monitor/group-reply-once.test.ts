@@ -5,6 +5,7 @@ import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import {
   authorizeExplicitOwnerGroupReply,
   consumeGroupReplyOnceAuthorization,
+  createExplicitOwnerReplyDeliveryGate,
   GROUP_REPLY_ONCE_TTL_MS,
   resetGroupReplyOnceForTests,
 } from "./group-reply-once.js";
@@ -660,5 +661,33 @@ describe("consumeGroupReplyOnceAuthorization", () => {
       status: "denied",
       reason: "already_consumed",
     });
+  });
+});
+
+describe("createExplicitOwnerReplyDeliveryGate", () => {
+  beforeEach(() => {
+    resetGroupReplyOnceForTests();
+  });
+
+  it("permits exactly one physical delivery across multiple candidates", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+    const gate = createExplicitOwnerReplyDeliveryGate({ msg });
+
+    expect(gate.hasTurnEligibility()).toBe(true);
+    expect(gate.claimForDelivery()).toMatchObject({ status: "authorized" });
+    expect(gate.claimForDelivery()).toMatchObject({
+      status: "denied",
+      reason: "already_consumed",
+    });
+  });
+
+  it("treats an absent authorization as not required", () => {
+    const msg = makeGroupReplyMessage();
+    msg.groupReplyOnce = undefined;
+    const gate = createExplicitOwnerReplyDeliveryGate({ msg });
+
+    expect(gate.hasTurnEligibility()).toBe(false);
+    expect(gate.claimForDelivery()).toEqual({ status: "not_required" });
   });
 });

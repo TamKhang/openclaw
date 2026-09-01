@@ -25,7 +25,7 @@ import { markWhatsAppVisibleDeliveryError } from "../util.js";
 import { formatGroupMembers } from "./group-members.js";
 import { formatAuthoritativeGroupReplyText } from "./group-participant-name.js";
 import {
-  consumeGroupReplyOnceAuthorization,
+  createExplicitOwnerReplyDeliveryGate,
   EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
 } from "./group-reply-once.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
@@ -649,65 +649,58 @@ export async function dispatchWhatsAppBufferedReply(params: {
   let didSendReply = false;
   let didLogHeartbeatStrip = false;
 
-  const explicitOwnerReplyDelivery = {
-    decided: false,
-    allowed: false,
-    reason: undefined as string | undefined,
-  };
-  const ensureExplicitOwnerReplyDeliveryAllowed = (): boolean => {
-    if (params.msg.groupReplyOnce === undefined) {
+  const explicitOwnerReplyDeliveryGate = createExplicitOwnerReplyDeliveryGate({
+    msg: params.msg,
+    authDir: params.authDir,
+  });
+  const claimExplicitOwnerReplyDeliveryAllowed = (): boolean => {
+    if (!explicitOwnerReplyDeliveryGate.hasTurnEligibility()) {
       return true;
     }
-    if (!explicitOwnerReplyDelivery.decided) {
-      const decision = consumeGroupReplyOnceAuthorization({
-        msg: params.msg,
-        authDir: params.authDir,
-      });
-      explicitOwnerReplyDelivery.decided = true;
-      explicitOwnerReplyDelivery.allowed = decision.status === "authorized";
-      explicitOwnerReplyDelivery.reason =
-        decision.status === "denied" ? decision.reason : undefined;
-      if (decision.status === "authorized") {
-        const authorization = decision.authorization;
-        params.replyLogger.info(
-          {
-            trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
-            decision: "authorized",
-            result: "authorized",
-            conversationId,
-            groupId: authorization.groupId,
-            targetParticipantId: authorization.target.participantId,
-            targetDisplayName: authorization.target.displayName ?? null,
-            quotedMessageId: authorization.quotedMessageId,
-            ownerSenderId: authorization.ownerSenderId,
-            ownerTriggerMessageId: authorization.ownerTriggerMessageId,
-          },
-          "explicit owner-delegated group reply delivery authorized",
-        );
-      } else {
-        const authorization = params.msg.groupReplyOnce;
-        params.replyLogger.warn(
-          {
-            trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
-            decision: "denied",
-            result: "denied",
-            reason: decision.reason,
-            conversationId,
-            groupId: authorization?.groupId ?? null,
-            targetParticipantId: authorization?.target.participantId ?? null,
-            targetDisplayName: authorization?.target.displayName ?? null,
-            quotedMessageId: authorization?.quotedMessageId ?? null,
-            ownerSenderId: authorization?.ownerSenderId ?? null,
-            ownerTriggerMessageId: authorization?.ownerTriggerMessageId ?? null,
-          },
-          "explicit owner-delegated group reply delivery denied",
-        );
-        logVerbose(
-          `Explicit owner-delegated group reply denied in ${conversationId}: ${decision.reason}`,
-        );
-      }
+    const decision = explicitOwnerReplyDeliveryGate.claimForDelivery();
+    if (decision.status === "authorized") {
+      const authorization = decision.authorization;
+      params.replyLogger.info(
+        {
+          trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+          decision: "authorized",
+          result: "authorized",
+          conversationId,
+          groupId: authorization.groupId,
+          targetParticipantId: authorization.target.participantId,
+          targetDisplayName: authorization.target.displayName ?? null,
+          quotedMessageId: authorization.quotedMessageId,
+          ownerSenderId: authorization.ownerSenderId,
+          ownerTriggerMessageId: authorization.ownerTriggerMessageId,
+        },
+        "explicit owner-delegated group reply delivery authorized",
+      );
+      return true;
     }
-    return explicitOwnerReplyDelivery.allowed;
+    if (decision.status === "denied") {
+      const authorization = params.msg.groupReplyOnce;
+      params.replyLogger.warn(
+        {
+          trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+          decision: "denied",
+          result: "denied",
+          reason: decision.reason,
+          conversationId,
+          groupId: authorization?.groupId ?? null,
+          targetParticipantId: authorization?.target.participantId ?? null,
+          targetDisplayName: authorization?.target.displayName ?? null,
+          quotedMessageId: authorization?.quotedMessageId ?? null,
+          ownerSenderId: authorization?.ownerSenderId ?? null,
+          ownerTriggerMessageId: authorization?.ownerTriggerMessageId ?? null,
+        },
+        "explicit owner-delegated group reply delivery denied",
+      );
+      logVerbose(
+        `Explicit owner-delegated group reply denied in ${conversationId}: ${decision.reason}`,
+      );
+      return false;
+    }
+    return true;
   };
 
   const deliverNormalizedPayload = async (
@@ -729,7 +722,7 @@ export async function dispatchWhatsAppBufferedReply(params: {
     if (!reply.hasMedia && !reply.text.trim()) {
       return whatsAppReplyDeliveryVisibility(false);
     }
-    if (!ensureExplicitOwnerReplyDeliveryAllowed()) {
+    if (!claimExplicitOwnerReplyDeliveryAllowed()) {
       return whatsAppReplyDeliveryVisibility(false);
     }
     const delivery = await params.deliverReply({
@@ -816,9 +809,6 @@ export async function dispatchWhatsAppBufferedReply(params: {
         if (!reply.hasMedia) {
           const flushResult = await mediaOnlyCoalescer.flushAll();
           logWhatsAppMediaOnlyFlushResult(flushResult);
-          if (!ensureExplicitOwnerReplyDeliveryAllowed()) {
-            return whatsAppReplyDeliveryVisibility(false);
-          }
           if (params.msg.groupReplyOnce !== undefined) {
             try {
               const delivery = await deliverNormalizedPayload(normalizedDeliveryPayload, info);

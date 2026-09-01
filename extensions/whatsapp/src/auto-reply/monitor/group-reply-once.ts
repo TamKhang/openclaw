@@ -59,6 +59,15 @@ export type GroupReplyOnceConsumeResult =
   | { status: "authorized"; authorization: GroupReplyOnceAuthorization }
   | { status: "denied"; reason: string };
 
+export type ExplicitOwnerReplyDeliveryClaimResult =
+  | { status: "not_required" }
+  | GroupReplyOnceConsumeResult;
+
+export type ExplicitOwnerReplyDeliveryGate = {
+  hasTurnEligibility: () => boolean;
+  claimForDelivery: () => ExplicitOwnerReplyDeliveryClaimResult;
+};
+
 export type GroupReplyOnceRuntime = {
   now: () => number;
   createToken: () => string;
@@ -314,4 +323,27 @@ export function consumeGroupReplyOnceAuthorization(
   // authorization consumed (fail-closed, no silent reactivation).
   authorization.consumed = true;
   return { status: "authorized", authorization };
+}
+
+export function createExplicitOwnerReplyDeliveryGate(params: {
+  msg: AdmittedWebInboundMessage;
+  authDir?: string;
+  runtime?: Pick<GroupReplyOnceRuntime, "now">;
+}): ExplicitOwnerReplyDeliveryGate {
+  const hasTurnEligibility = params.msg.groupReplyOnce !== undefined;
+  return {
+    hasTurnEligibility: () => hasTurnEligibility,
+    claimForDelivery: () => {
+      if (!hasTurnEligibility) {
+        return { status: "not_required" };
+      }
+      return consumeGroupReplyOnceAuthorization(
+        {
+          msg: params.msg,
+          authDir: params.authDir,
+        },
+        params.runtime,
+      );
+    },
+  };
 }
