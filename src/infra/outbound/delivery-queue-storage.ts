@@ -4,6 +4,7 @@ import type { ReplyDispatchKind } from "../../auto-reply/reply/reply-dispatcher.
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import type { RenderedMessageBatchPlanItem } from "../../channels/message/types.js";
 import type { ReplyToMode } from "../../config/types.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import type { PluginHookReplyPayloadSendingContext } from "../../plugins/hook-types.js";
 import {
   deleteDeliveryQueueEntry,
@@ -74,6 +75,8 @@ export type QueuedDeliveryPayload = {
   session?: OutboundSessionContext;
   /** Gateway caller scopes at enqueue time, preserved for recovery replay. */
   gatewayClientScopes?: readonly string[];
+  /** Trusted, single-use outbound group-reply authorization preserved for recovery replay. */
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 };
 
 export interface QueuedDelivery extends QueuedDeliveryPayload {
@@ -127,6 +130,7 @@ export async function enqueueDelivery(
     mirror: params.mirror,
     session: params.session,
     gatewayClientScopes: params.gatewayClientScopes,
+    outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
     retryCount: 0,
   };
   upsertDeliveryQueueEntry({

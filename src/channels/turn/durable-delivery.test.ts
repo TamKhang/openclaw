@@ -36,6 +36,15 @@ type SendDurableMessageBatchRequest = {
   durability?: string;
   requireUnknownSendReconciliation?: boolean;
   gatewayClientScopes?: readonly string[];
+  outboundGroupReplyAuthorization?: {
+    capability: "whatsapp.group.reply_once";
+    token: string;
+    groupId: string;
+    chatId: string;
+    ownerTriggerMessageId: string;
+    quotedMessageId: string;
+    targetParticipantId: string;
+  };
 };
 
 type DeliverySupportRequest = {
@@ -167,6 +176,35 @@ describe("durable inbound reply delivery", () => {
     expect(mocks.sendDurableMessageBatch).toHaveBeenCalledTimes(1);
     expect(latestSendDurableMessageBatchRequest().durability).toBe("best_effort");
     expect(latestSendDurableMessageBatchRequest().requireUnknownSendReconciliation).toBeUndefined();
+  });
+
+  it("forwards the bounded outbound group reply authorization into durable sending", async () => {
+    const authorization = {
+      capability: "whatsapp.group.reply_once" as const,
+      token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+      groupId: "84905113232-1552963395@g.us",
+      chatId: "84905113232-1552963395@g.us",
+      ownerTriggerMessageId: "AC4FE2814AE95FE591846498AE7BFF40",
+      quotedMessageId: "QUOTED-1",
+      targetParticipantId: "89051902267555@lid",
+    };
+
+    await deliverInboundReplyWithMessageSendContext({
+      cfg: {},
+      channel: "whatsapp",
+      agentId: "main",
+      info: { kind: "final" },
+      payload: { text: "final" },
+      ctxPayload: ctxPayload({
+        OriginatingTo: "84905113232-1552963395@g.us",
+        OutboundGroupReplyAuthorization: authorization,
+      }),
+    });
+
+    expect(mocks.sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+    expect(latestSendDurableMessageBatchRequest().outboundGroupReplyAuthorization).toEqual(
+      authorization,
+    );
   });
 
   it("uses required durability when a caller explicitly requires unknown-send reconciliation", async () => {

@@ -210,6 +210,7 @@ export async function deliverInboundReplyWithMessageSendContext(
     ...(durability === "required" ? { requireUnknownSendReconciliation: true } : {}),
     session,
     gatewayClientScopes: params.ctxPayload.GatewayClientScopes ?? [],
+    outboundGroupReplyAuthorization: params.ctxPayload.OutboundGroupReplyAuthorization,
   });
   if (send.status === "failed") {
     return { status: "failed" as const, error: send.error };

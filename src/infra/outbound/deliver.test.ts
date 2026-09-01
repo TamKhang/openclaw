@@ -4559,6 +4559,60 @@ describe("deliverOutboundPayloads", () => {
     expect(ctx).not.toHaveProperty("sessionKey");
   });
 
+  it("forwards the trusted outbound group reply authorization into message_sending context", async () => {
+    hookMocks.runner.hasHooks.mockImplementation(
+      (hookName?: string) => hookName === "message_sending",
+    );
+    const sendText = vi.fn().mockResolvedValue({
+      channel: "matrix" as const,
+      messageId: "mx-group-auth",
+      roomId: "!room",
+    });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "matrix",
+            outbound: { deliveryMode: "direct", sendText },
+          }),
+        },
+      ]),
+    );
+    const authorization = {
+      capability: "whatsapp.group.reply_once" as const,
+      token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+      groupId: "84905113232-1552963395@g.us",
+      chatId: "84905113232-1552963395@g.us",
+      ownerTriggerMessageId: "AC4FE2814AE95FE591846498AE7BFF40",
+      quotedMessageId: "QUOTED-1",
+      targetParticipantId: "89051902267555@lid",
+    };
+
+    await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room",
+      payloads: [{ text: "hello" }],
+      outboundGroupReplyAuthorization: authorization,
+    });
+
+    expect(hookMocks.runner.runMessageSending).toHaveBeenCalledTimes(1);
+    expect(hookMocks.runner.runMessageSending).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        channelId: "matrix",
+        outboundGroupReplyAuthorization: authorization,
+      }),
+    );
+    expect(queueMocks.enqueueDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outboundGroupReplyAuthorization: authorization,
+      }),
+    );
+  });
+
   it("threads sessionKey into the message_sent hook context when session is provided", async () => {
     // Contract test for `message_sent`: the documented JSDoc says the
     // outbound delivery hooks mirror `OutboundSessionContext.key`. This

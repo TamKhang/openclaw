@@ -337,5 +337,29 @@ describe("delivery-queue storage", () => {
         requesterSenderE164: "+15551234567",
       });
     });
+
+    it("persists bounded outbound group reply authorization for recovery replay", async () => {
+      const authorization = {
+        capability: "whatsapp.group.reply_once" as const,
+        token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+        groupId: "84905113232-1552963395@g.us",
+        chatId: "84905113232-1552963395@g.us",
+        ownerTriggerMessageId: "AC4FE2814AE95FE591846498AE7BFF40",
+        quotedMessageId: "QUOTED-1",
+        targetParticipantId: "89051902267555@lid",
+      };
+      const id = await enqueueTextDelivery(
+        {
+          channel: "forum",
+          to: "2",
+          payloads: [{ text: "b" }],
+          outboundGroupReplyAuthorization: authorization,
+        },
+        tmpDir(),
+      );
+
+      const entry = readQueuedEntry(tmpDir(), id);
+      expect(entry.outboundGroupReplyAuthorization).toEqual(authorization);
+    });
   });
 });

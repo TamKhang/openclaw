@@ -1145,6 +1145,15 @@ describe("delivery-queue recovery", () => {
           requesterSenderUsername: "sender.one",
           requesterSenderE164: "+15551234567",
         },
+        outboundGroupReplyAuthorization: {
+          capability: "whatsapp.group.reply_once",
+          token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+          groupId: "84905113232-1552963395@g.us",
+          chatId: "84905113232-1552963395@g.us",
+          ownerTriggerMessageId: "AC4FE2814AE95FE591846498AE7BFF40",
+          quotedMessageId: "QUOTED-1",
+          targetParticipantId: "89051902267555@lid",
+        },
       },
       tmpDir(),
     );
@@ -1162,6 +1171,7 @@ describe("delivery-queue recovery", () => {
       gatewayClientScopes?: string[];
       mirror?: unknown;
       session?: unknown;
+      outboundGroupReplyAuthorization?: unknown;
     };
     expect(deliverInput.bestEffort).toBe(true);
     expect(deliverInput.gifPlayback).toBe(true);
@@ -1188,6 +1198,15 @@ describe("delivery-queue recovery", () => {
       requesterSenderName: "Sender One",
       requesterSenderUsername: "sender.one",
       requesterSenderE164: "+15551234567",
+    });
+    expect(deliverInput.outboundGroupReplyAuthorization).toEqual({
+      capability: "whatsapp.group.reply_once",
+      token: "5d3e5f20-6b3c-4a0e-9f6a-2c9d7e2c4a1f",
+      groupId: "84905113232-1552963395@g.us",
+      chatId: "84905113232-1552963395@g.us",
+      ownerTriggerMessageId: "AC4FE2814AE95FE591846498AE7BFF40",
+      quotedMessageId: "QUOTED-1",
+      targetParticipantId: "89051902267555@lid",
     });
   });
 

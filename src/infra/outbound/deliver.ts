@@ -41,6 +41,7 @@ import {
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
 import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capability.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
 import { isPreConnectNetworkError } from "../delivery-recovery.shared.js";
@@ -751,6 +752,8 @@ type DeliverOutboundPayloadsCoreParams = {
   mirror?: DeliveryMirror;
   silent?: boolean;
   gatewayClientScopes?: readonly string[];
+  /** Trusted, single-use outbound group-reply authorization for the bounded payload. */
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 };
 
 /**
@@ -1164,6 +1167,7 @@ async function applyMessageSendingHook(params: {
   replyToId?: string | null;
   threadId?: string | number | null;
   sessionKey?: string;
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 }): Promise<{
   cancelled: boolean;
   cancelReason?: string;
@@ -1198,6 +1202,9 @@ async function applyMessageSendingHook(params: {
         accountId: params.accountId ?? undefined,
         conversationId: params.to,
         ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+        ...(params.outboundGroupReplyAuthorization
+          ? { outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization }
+          : {}),
       },
     );
     if (sendingResult?.cancel) {
@@ -1374,6 +1381,7 @@ export async function deliverOutboundPayloadsInternal(
         mirror: params.mirror,
         session: params.session,
         gatewayClientScopes: params.gatewayClientScopes,
+        outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
       }).catch((err: unknown) => {
         if (queuePolicy === "required") {
           throw err;
@@ -2037,6 +2045,7 @@ async function deliverOutboundPayloadsCore(
         replyToId: resolveCurrentReplyTo(deliveryPayload).replyToId,
         threadId: params.threadId,
         sessionKey: sessionKeyForInternalHooks,
+        outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
       });
       if (hookResult.cancelled) {
         const hookEffect =
