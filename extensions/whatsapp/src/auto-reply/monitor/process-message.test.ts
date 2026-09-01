@@ -141,7 +141,7 @@ vi.mock("./runtime-api.js", async (importOriginal) => {
 });
 
 import { clearInternalHooks, registerInternalHook } from "openclaw/plugin-sdk/hook-runtime";
-import { processMessage } from "./process-message.js";
+import { emitWhatsAppMessageReceivedHooksIfEnabled, processMessage } from "./process-message.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -430,8 +430,7 @@ describe("processMessage group system prompt wiring", () => {
       GroupSubject: "Test Group",
     }));
 
-    await callProcessMessage({
-      cfg: {
+    const cfg = {
         channels: {
           whatsapp: {
             pluginHooks: {
@@ -439,7 +438,11 @@ describe("processMessage group system prompt wiring", () => {
             },
           },
         },
-      },
+      };
+    await emitWhatsAppMessageReceivedHooksIfEnabled({
+      cfg,
+      msg: makeBaseMsg(),
+      route: baseRoute,
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -523,7 +526,11 @@ describe("processMessage group system prompt wiring", () => {
     registerInternalHook("message:received", internalReceived);
     resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
 
-    await callProcessMessage();
+    await emitWhatsAppMessageReceivedHooksIfEnabled({
+      cfg: {},
+      msg: makeBaseMsg(),
+      route: baseRoute,
+    });
 
     expect(runMessageReceivedMock).not.toHaveBeenCalled();
     expect(internalReceived).not.toHaveBeenCalled();

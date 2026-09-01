@@ -8,6 +8,8 @@ const resolveConfiguredBindingRouteMock = vi.hoisted(() => vi.fn());
 const ensureConfiguredBindingRouteReadyMock = vi.hoisted(() => vi.fn());
 const resolveAgentRouteMock = vi.hoisted(() => vi.fn());
 const applyGroupGatingMock = vi.hoisted(() => vi.fn());
+const authorizeGroupConversationMock = vi.hoisted(() => vi.fn());
+const emitMessageReceivedMock = vi.hoisted(() => vi.fn());
 const updateLastRouteInBackgroundMock = vi.hoisted(() => vi.fn());
 const transcribeFirstAudioMock = vi.hoisted(() => vi.fn());
 const maybeSendAckReactionMock = vi.hoisted(() => vi.fn());
@@ -59,7 +61,9 @@ vi.mock("./broadcast.js", () => ({
 }));
 
 vi.mock("./group-gating.js", () => ({
-  applyGroupGating: (...args: unknown[]) => applyGroupGatingMock(...args),
+  authorizeWhatsAppGroupConversation: (...args: unknown[]) =>
+    authorizeGroupConversationMock(...args),
+  applyAuthorizedGroupGating: (...args: unknown[]) => applyGroupGatingMock(...args),
 }));
 
 vi.mock("./last-route.js", () => ({
@@ -67,6 +71,8 @@ vi.mock("./last-route.js", () => ({
 }));
 
 vi.mock("./process-message.js", () => ({
+  emitWhatsAppMessageReceivedHooksIfEnabled: (...args: unknown[]) =>
+    emitMessageReceivedMock(...args),
   processMessage: (...args: unknown[]) => processMessageMock(...args),
 }));
 
@@ -363,6 +369,10 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
     maybeBroadcastMessageMock.mockResolvedValue(false);
     applyGroupGatingMock.mockReset();
     applyGroupGatingMock.mockResolvedValue({ shouldProcess: true });
+    authorizeGroupConversationMock.mockReset();
+    authorizeGroupConversationMock.mockReturnValue({ authorized: true, inboundPolicy: {} });
+    emitMessageReceivedMock.mockReset();
+    emitMessageReceivedMock.mockResolvedValue(undefined);
     updateLastRouteInBackgroundMock.mockReset();
     transcribeFirstAudioMock.mockReset();
     transcribeFirstAudioMock.mockResolvedValue("agent please handle this");
@@ -510,6 +520,36 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
     expect(updateLastRouteInBackgroundMock).not.toHaveBeenCalled();
     expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
     expect(processMessageMock).not.toHaveBeenCalled();
+    expect(emitMessageReceivedMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not observe a conversation rejected by group authorization", async () => {
+    authorizeGroupConversationMock.mockReturnValueOnce({ authorized: false });
+    const { handler } = createHandler(vi.fn(), createGroupCfg());
+
+    await handler(createGroupMessage());
+
+    expect(emitMessageReceivedMock).not.toHaveBeenCalled();
+    expect(applyGroupGatingMock).not.toHaveBeenCalled();
+    expect(processMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("observes an authorized source message once before broadcast fan-out", async () => {
+    resolveConfiguredBindingRouteMock.mockImplementationOnce(({ route }) => ({
+      bindingResolution: null,
+      route,
+    }));
+    maybeBroadcastMessageMock.mockResolvedValueOnce(true);
+    const { handler } = createHandler(vi.fn(), {
+      ...createGroupCfg(),
+      broadcast: { [groupConversationId]: ["agent-a", "agent-b"] },
+    });
+
+    await handler(createGroupMessage());
+
+    expect(emitMessageReceivedMock).toHaveBeenCalledTimes(1);
+    expect(maybeBroadcastMessageMock).toHaveBeenCalledTimes(1);
+    expect(processMessageMock).not.toHaveBeenCalled();
   });
 
   it("does not record group routes when admission blocks dispatch", async () => {
@@ -538,6 +578,7 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
     );
 
     expect(applyGroupGatingMock).not.toHaveBeenCalled();
+    expect(emitMessageReceivedMock).not.toHaveBeenCalled();
     expect(updateLastRouteInBackgroundMock).not.toHaveBeenCalled();
     expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
     expect(processMessageMock).not.toHaveBeenCalled();

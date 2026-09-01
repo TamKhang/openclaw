@@ -34,7 +34,7 @@ export type GroupHistoryEntry = {
   senderJid?: string;
 };
 
-type ApplyGroupGatingParams = {
+export type ApplyGroupGatingParams = {
   cfg: OpenClawConfig;
   msg: AdmittedWebInboundMessage;
   mentionText?: string;
@@ -138,8 +138,7 @@ function skipGroupMessageAndStoreHistory(
   return { shouldProcess: false } as const;
 }
 
-export async function applyGroupGating(params: ApplyGroupGatingParams) {
-  const sender = getSenderIdentity(params.msg);
+export function authorizeWhatsAppGroupConversation(params: ApplyGroupGatingParams) {
   const self = getSelfIdentity(params.msg, params.authDir);
   const admission = requireWhatsAppInboundAdmission(params.msg);
   const conversationId = admission.conversation.id;
@@ -149,21 +148,37 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     selfE164: self.e164 ?? null,
   });
   const conversationGroupPolicy = inboundPolicy.resolveConversationGroupPolicy(conversationId);
-  if (conversationGroupPolicy.allowlistEnabled && !conversationGroupPolicy.allowed) {
+  if (!conversationGroupPolicy.allowed) {
     const accountId = inboundPolicy.account.accountId;
-    const warnKey = `${accountId}:${conversationId}`;
-    if (shouldWarnForGroupDrop(warnKey)) {
-      const groupsPath = resolveWhatsAppGroupsConfigPath({ cfg: params.cfg, accountId });
-      params.replyLogger.warn(
-        { conversationId, accountId, groupsPath },
-        `WhatsApp group ${conversationId} not in ${groupsPath} — inbound dropped. Add the group JID to ${groupsPath} (or add "*" there to admit all groups). Sender authorization still applies.`,
+    if (conversationGroupPolicy.allowlistEnabled) {
+      const warnKey = `${accountId}:${conversationId}`;
+      if (shouldWarnForGroupDrop(warnKey)) {
+        const groupsPath = resolveWhatsAppGroupsConfigPath({ cfg: params.cfg, accountId });
+        params.replyLogger.warn(
+          { conversationId, accountId, groupsPath },
+          `WhatsApp group ${conversationId} not in ${groupsPath} — inbound dropped. Add the group JID to ${groupsPath} (or add "*" there to admit all groups). Sender authorization still applies.`,
+        );
+      }
+      params.logVerbose(
+        `Dropping message from unregistered WhatsApp group ${conversationId}. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.`,
       );
     }
-    params.logVerbose(
-      `Dropping message from unregistered WhatsApp group ${conversationId}. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.`,
-    );
-    return { shouldProcess: false };
+    return { authorized: false } as const;
   }
+
+  return { authorized: true, inboundPolicy } as const;
+}
+
+export async function applyAuthorizedGroupGating(
+  params: ApplyGroupGatingParams & {
+    inboundPolicy: ReturnType<typeof resolveWhatsAppInboundPolicy>;
+  },
+) {
+  const sender = getSenderIdentity(params.msg);
+  const self = getSelfIdentity(params.msg, params.authDir);
+  const admission = requireWhatsAppInboundAdmission(params.msg);
+  const conversationId = admission.conversation.id;
+  const { inboundPolicy } = params;
 
   noteGroupMember(
     params.groupMemberNames,
@@ -274,4 +289,12 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
   }
 
   return { shouldProcess: true };
+}
+
+export async function applyGroupGating(params: ApplyGroupGatingParams) {
+  const authorization = authorizeWhatsAppGroupConversation(params);
+  if (!authorization.authorized) {
+    return { shouldProcess: false } as const;
+  }
+  return applyAuthorizedGroupGating({ ...params, inboundPolicy: authorization.inboundPolicy });
 }

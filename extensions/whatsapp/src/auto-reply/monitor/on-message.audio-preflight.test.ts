@@ -27,6 +27,8 @@ const ackReactionHandle = {
   remove: vi.fn(async () => undefined),
 };
 const applyGroupGatingMock = vi.fn();
+const authorizeGroupConversationMock = vi.fn();
+const emitMessageReceivedMock = vi.fn();
 
 vi.mock("./audio-preflight.runtime.js", () => ({
   transcribeFirstAudio: (...args: unknown[]) => transcribeFirstAudioMock(...args),
@@ -37,6 +39,8 @@ vi.mock("./ack-reaction.js", () => ({
 }));
 
 vi.mock("./process-message.js", () => ({
+  emitWhatsAppMessageReceivedHooksIfEnabled: (...args: unknown[]) =>
+    emitMessageReceivedMock(...args),
   processMessage: (...args: unknown[]) => processMessageMock(...args),
 }));
 
@@ -50,7 +54,9 @@ vi.mock("./status-reaction.js", () => ({
 }));
 
 vi.mock("./group-gating.js", () => ({
-  applyGroupGating: (...args: unknown[]) => applyGroupGatingMock(...args),
+  authorizeWhatsAppGroupConversation: (...args: unknown[]) =>
+    authorizeGroupConversationMock(...args),
+  applyAuthorizedGroupGating: (...args: unknown[]) => applyGroupGatingMock(...args),
 }));
 
 vi.mock("./last-route.js", () => ({
@@ -227,6 +233,10 @@ describe("createWebOnMessageHandler audio preflight", () => {
     updateLastRouteInBackgroundMock.mockReset();
     applyGroupGatingMock.mockReset();
     applyGroupGatingMock.mockResolvedValue({ shouldProcess: true });
+    authorizeGroupConversationMock.mockReset();
+    authorizeGroupConversationMock.mockReturnValue({ authorized: true, inboundPolicy: {} });
+    emitMessageReceivedMock.mockReset();
+    emitMessageReceivedMock.mockResolvedValue(undefined);
   });
 
   it("sends ack reaction before audio preflight for voice notes", async () => {
@@ -404,6 +414,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
     expect(secondGatingParams.mentionText).toBe("transcribed voice note");
     expect(secondGatingParams).not.toHaveProperty("deferMissingMention");
     expect(processMessageMock).toHaveBeenCalledTimes(1);
+    expect(emitMessageReceivedMock).toHaveBeenCalledTimes(1);
     const processParams = mockObjectArg(processMessageMock, "processMessage");
     expect(processParams.preflightAudioTranscript).toBe("transcribed voice note");
     expect(processParams.ackAlreadySent).toBe(true);

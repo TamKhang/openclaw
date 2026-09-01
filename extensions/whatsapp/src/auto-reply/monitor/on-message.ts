@@ -29,10 +29,13 @@ import { maybeSendAckReaction } from "./ack-reaction.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
-import { applyGroupGating } from "./group-gating.js";
+import {
+  applyAuthorizedGroupGating,
+  authorizeWhatsAppGroupConversation,
+} from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
 import { resolvePeerId } from "./peer.js";
-import { processMessage } from "./process-message.js";
+import { emitWhatsAppMessageReceivedHooksIfEnabled, processMessage } from "./process-message.js";
 import {
   createWhatsAppStatusReactionController,
   type StatusReactionController,
@@ -201,6 +204,31 @@ export function createWebOnMessageHandler(params: {
           })
         : route.sessionKey;
 
+    let groupAuthorization: ReturnType<typeof authorizeWhatsAppGroupConversation> | undefined;
+    if (conversationKind === "group") {
+      groupAuthorization = authorizeWhatsAppGroupConversation({
+        cfg,
+        msg,
+        groupHistoryKey,
+        agentId: route.agentId,
+        sessionKey: route.sessionKey,
+        baseMentionConfig,
+        providerMentionPatterns: account.mentionPatterns,
+        authDir: account.authDir,
+        selfChatMode: account.selfChatMode,
+        groupHistories: params.groupHistories,
+        groupHistoryLimit: params.groupHistoryLimit,
+        groupMemberNames: params.groupMemberNames,
+        logVerbose,
+        replyLogger: params.replyLogger,
+      });
+      if (!groupAuthorization.authorized) {
+        return;
+      }
+    }
+
+    await emitWhatsAppMessageReceivedHooksIfEnabled({ cfg, msg, route });
+
     // Preflight audio transcription: run once before broadcast fan-out so all
     // agents share the same transcript instead of each making a separate STT call.
     // For DMs, only do this on the real inbound path after access-control/pairing
@@ -334,9 +362,13 @@ export function createWebOnMessageHandler(params: {
       // message first; configured ACP routes also wait for backend readiness.
       recordAcceptedConfiguredGroupRoute = recordGroupRoute;
 
-      let gating = await applyGroupGating({
+      if (!groupAuthorization?.authorized) {
+        return;
+      }
+      let gating = await applyAuthorizedGroupGating({
         cfg,
         msg,
+        inboundPolicy: groupAuthorization.inboundPolicy,
         deferMissingMention: hasAudioBody && Boolean(msg.payload.media?.path),
         groupHistoryKey,
         agentId: route.agentId,
@@ -357,9 +389,10 @@ export function createWebOnMessageHandler(params: {
         gating.needsMentionText === true
       ) {
         await runAudioPreflightOnce();
-        gating = await applyGroupGating({
+        gating = await applyAuthorizedGroupGating({
           cfg,
           msg,
+          inboundPolicy: groupAuthorization.inboundPolicy,
           ...(typeof preflightAudioTranscript === "string"
             ? { mentionText: preflightAudioTranscript }
             : {}),

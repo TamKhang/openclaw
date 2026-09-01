@@ -151,24 +151,39 @@ function emitWhatsAppMessageReceivedHooks(params: {
   );
 }
 
-function emitWhatsAppMessageReceivedHooksIfEnabled(params: {
+export async function emitWhatsAppMessageReceivedHooksIfEnabled(params: {
   cfg: ReturnType<LoadConfigFn>;
-  ctx: Awaited<ReturnType<typeof buildWhatsAppInboundContext>>;
-  accountId?: string;
-  sessionKey: string;
-}): void {
+  msg: AdmittedWebInboundMessage;
+  route: ReturnType<typeof resolveAgentRoute>;
+}): Promise<void> {
   if (
     !shouldEmitWhatsAppMessageReceivedHooks({
       cfg: params.cfg,
-      accountId: params.accountId,
+      accountId: params.route.accountId,
     })
   ) {
     return;
   }
 
+  const sender = getSenderIdentity(params.msg);
+  const normalizedContent = params.msg.payload.body;
+  const ctx = await buildWhatsAppInboundContext({
+    bodyForAgent: normalizedContent,
+    combinedBody: normalizedContent,
+    commandBody: normalizedContent,
+    msg: params.msg,
+    rawBody: normalizedContent,
+    route: params.route,
+    sender: {
+      id: getPrimaryIdentityId(sender) ?? undefined,
+      name: sender.name ?? undefined,
+      e164: sender.e164 ?? undefined,
+    },
+    suppressMessageReceivedHooks: true,
+  });
   emitWhatsAppMessageReceivedHooks({
-    ctx: params.ctx,
-    sessionKey: params.sessionKey,
+    ctx,
+    sessionKey: params.route.sessionKey,
   });
 }
 
@@ -503,13 +518,6 @@ export async function processMessage(params: {
     visibleReplyTo: visibleReplyTo ?? undefined,
     suppressMessageReceivedHooks: true,
   });
-  emitWhatsAppMessageReceivedHooksIfEnabled({
-    cfg: params.cfg,
-    ctx: ctxPayload,
-    accountId: params.route.accountId,
-    sessionKey: params.route.sessionKey,
-  });
-
   const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
     cfg: params.cfg,
     allowFrom: inboundPolicy.configuredAllowFrom,
