@@ -13,6 +13,7 @@ import type {
   PluginNextTurnInjectionPlacement,
   PluginNextTurnInjectionRecord,
 } from "./host-hook-turn-types.js";
+import type { PluginSafeReadProjection } from "./safe-read-projection.js";
 
 export { isPluginJsonValue } from "./host-hook-json.js";
 export type { PluginJsonValue } from "./host-hook-json.js";
@@ -89,6 +90,8 @@ export type PluginToolMetadataRegistration = {
   description?: string;
   risk?: "low" | "medium" | "high";
   tags?: string[];
+  /** Fixed safe-read projection declaration for this plugin-owned tool. */
+  safeReadProjection?: PluginSafeReadProjection;
 };
 
 type PluginControlUiTabGroup = "control" | "agent";

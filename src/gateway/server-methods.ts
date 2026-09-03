@@ -210,6 +210,8 @@ const CORE_GATEWAY_HANDLER_MODULES = {
     import("./server-methods/tools-effective.js").then((module) => module.toolsEffectiveHandlers),
   "tools-invoke": () =>
     import("./server-methods/tools-invoke.js").then((module) => module.toolsInvokeHandlers),
+  "read-projection": () =>
+    import("./server-methods/read-projection.js").then((module) => module.readProjectionHandlers),
   "mcp-app": () => import("./server-methods/mcp-app.js").then((module) => module.mcpAppHandlers),
   tts: () => import("./server-methods/tts.js").then((module) => module.ttsHandlers),
   update: () => import("./server-methods/update.js").then((module) => module.updateHandlers),
