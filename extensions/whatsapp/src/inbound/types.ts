@@ -6,6 +6,7 @@ import type {
   NormalizedLocation,
 } from "openclaw/plugin-sdk/channel-inbound";
 import type { PollInput } from "openclaw/plugin-sdk/poll-runtime";
+import type { GroupReplyOnceAuthorization } from "../auto-reply/monitor/group-reply-delegation.types.js";
 import type { WhatsAppIdentity, WhatsAppReplyContext, WhatsAppSelfIdentity } from "../identity.js";
 import type { WhatsAppQuotedMessageKey } from "../quoted-message.js";
 import type { WhatsAppInboundAdmission } from "./admission.js";
@@ -131,6 +132,7 @@ export type WebInboundCallbackMessage = {
   platform: WhatsAppInboundPlatform;
   quote?: WhatsAppInboundQuote;
   group?: WhatsAppInboundGroupContext;
+  groupReplyOnce?: GroupReplyOnceAuthorization;
   wasMentioned?: boolean;
   groupMention?: {
     wasMentioned: boolean;

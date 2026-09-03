@@ -11,18 +11,9 @@ import {
   runChannelInboundEvent,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { bindIngressLifecycleToReplyOptions } from "openclaw/plugin-sdk/channel-outbound";
-import {
-  createInternalHookEvent,
-  deriveInboundMessageHookContext,
-  fireAndForgetBoundedHook,
-  toInternalMessageReceivedContext,
-  toPluginMessageContext,
-  toPluginMessageReceivedEvent,
-  triggerInternalHook,
-} from "openclaw/plugin-sdk/hook-runtime";
 import { formatAudioTranscriptForAgent } from "openclaw/plugin-sdk/media-understanding-runtime";
-import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { resolveBatchedReplyThreadingPolicy } from "openclaw/plugin-sdk/reply-reference";
+import type { FinalizedMsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { getPrimaryIdentityId, getSelfIdentity, getSenderIdentity } from "../../identity.js";
 import {
   resolveWhatsAppCommandAuthorized,
@@ -30,6 +21,10 @@ import {
 } from "../../inbound-policy.js";
 import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
 import { resolveWhatsAppIngressLifecycle } from "../../inbound/ingress-lifecycle.js";
+import {
+  emitWhatsAppMessageReceivedHooks,
+  shouldEmitWhatsAppMessageReceivedHooks,
+} from "../../inbound/observation.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
@@ -41,6 +36,7 @@ import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog } from "../loggers.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
+import { buildGroupReplyAgentBody } from "./group-participant-name.js";
 import {
   resolveVisibleWhatsAppGroupHistory,
   resolveVisibleWhatsAppReplyContext,
@@ -79,86 +75,9 @@ import {
   type StatusReactionController,
 } from "./status-reaction.js";
 
-const WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS = {
-  maxConcurrency: 8,
-  maxQueue: 128,
-  timeoutMs: 2_000,
-};
-
-type WhatsAppMessageReceivedHookConfig = {
-  pluginHooks?: {
-    messageReceived?: boolean;
-  };
-  accounts?: Record<string, unknown>;
-};
-
-function readWhatsAppMessageReceivedHookOptIn(value: unknown): boolean | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-  const pluginHooks = (value as WhatsAppMessageReceivedHookConfig).pluginHooks;
-  if (pluginHooks?.messageReceived === undefined) {
-    return undefined;
-  }
-  return pluginHooks.messageReceived;
-}
-
-function shouldEmitWhatsAppMessageReceivedHooks(params: {
-  cfg: ReturnType<LoadConfigFn>;
-  accountId?: string;
-}): boolean {
-  const channelConfig = params.cfg.channels?.whatsapp as
-    | WhatsAppMessageReceivedHookConfig
-    | undefined;
-  const accountConfig =
-    params.accountId && channelConfig?.accounts
-      ? channelConfig.accounts[params.accountId]
-      : undefined;
-
-  return (
-    readWhatsAppMessageReceivedHookOptIn(accountConfig) ??
-    readWhatsAppMessageReceivedHookOptIn(channelConfig) ??
-    false
-  );
-}
-
-function emitWhatsAppMessageReceivedHooks(params: {
-  ctx: Awaited<ReturnType<typeof prepareWhatsAppInboundContext>>["ctxPayload"];
-  sessionKey: string;
-}): void {
-  const canonical = deriveInboundMessageHookContext(params.ctx);
-  const hookRunner = getGlobalHookRunner();
-  if (hookRunner?.hasHooks("message_received")) {
-    fireAndForgetBoundedHook(
-      () =>
-        hookRunner.runMessageReceived(
-          toPluginMessageReceivedEvent(canonical),
-          toPluginMessageContext(canonical),
-        ),
-      "whatsapp: message_received plugin hook failed",
-      undefined,
-      WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS,
-    );
-  }
-  fireAndForgetBoundedHook(
-    () =>
-      triggerInternalHook(
-        createInternalHookEvent(
-          "message",
-          "received",
-          params.sessionKey,
-          toInternalMessageReceivedContext(canonical),
-        ),
-      ),
-    "whatsapp: message_received internal hook failed",
-    undefined,
-    WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS,
-  );
-}
-
 function emitWhatsAppMessageReceivedHooksIfEnabled(params: {
   cfg: ReturnType<LoadConfigFn>;
-  ctx: Awaited<ReturnType<typeof prepareWhatsAppInboundContext>>["ctxPayload"];
+  ctx: FinalizedMsgContext;
   accountId?: string;
   sessionKey: string;
 }): void {
@@ -214,6 +133,8 @@ export async function processMessage(params: {
    * - null    → preflight was attempted but failed / returned nothing; skip internal STT
    * - undefined (omitted) → caller did not attempt preflight; run internal STT as normal */
   preflightAudioTranscript?: string | null;
+  /** True when a pre-gate group observation already emitted this hook. */
+  messageReceivedEmitted?: boolean;
   buildContext?: typeof buildChannelInboundEventContext;
   dispatchReplyFromConfig?: NonNullable<ChannelInboundTurnPlan["dispatchReplyFromConfig"]>;
 }) {
@@ -425,6 +346,11 @@ export async function processMessage(params: {
 
   const sender = getSenderIdentity(params.msg);
   const commandBody = params.msg.payload.commandBody ?? params.msg.payload.body;
+  const bodyForAgent = params.msg.groupReplyOnce
+    ? buildGroupReplyAgentBody({
+        quotedBody: params.msg.groupReplyOnce.quotedBody,
+      })
+    : msgForAgent.payload.body;
   const dmRouteTarget = resolveWhatsAppDmRouteTarget({
     msg: params.msg,
     senderE164: sender.e164 ?? undefined,
@@ -476,7 +402,7 @@ export async function processMessage(params: {
         ? ({ kind: "authorized" } as const)
         : ({ kind: "denied" } as const);
   const prepared = await prepareWhatsAppInboundContext({
-    bodyForAgent: msgForAgent.payload.body,
+    bodyForAgent,
     combinedBody,
     command: {
       kind: isTextCommand ? "text-slash" : "normal",
@@ -503,17 +429,30 @@ export async function processMessage(params: {
     suppressMessageReceivedHooks: true,
   });
   const { inbound, turnInput, ctxPayload } = prepared;
+  if (params.msg.groupReplyOnce) {
+    ctxPayload.OutboundGroupReplyAuthorization = {
+      capability: "whatsapp.group.reply_once",
+      token: params.msg.groupReplyOnce.token,
+      groupId: params.msg.groupReplyOnce.groupId,
+      chatId: params.msg.groupReplyOnce.chatId,
+      ownerTriggerMessageId: params.msg.groupReplyOnce.ownerTriggerMessageId,
+      quotedMessageId: params.msg.groupReplyOnce.quotedMessageId,
+      targetParticipantId: params.msg.groupReplyOnce.target.participantId,
+    };
+  }
   const transport = buildWhatsAppInboundTransportContext(params.msg);
   const ingressLifecycle = resolveWhatsAppIngressLifecycle(params.msg);
   const turnAdoptionLifecycle = ingressLifecycle
     ? bindIngressLifecycleToReplyOptions(ingressLifecycle).turnAdoptionLifecycle
     : undefined;
-  emitWhatsAppMessageReceivedHooksIfEnabled({
-    cfg: params.cfg,
-    ctx: ctxPayload,
-    accountId: params.route.accountId,
-    sessionKey: params.route.sessionKey,
-  });
+  if (params.messageReceivedEmitted !== true) {
+    emitWhatsAppMessageReceivedHooksIfEnabled({
+      cfg: params.cfg,
+      ctx: ctxPayload,
+      accountId: params.route.accountId,
+      sessionKey: params.route.sessionKey,
+    });
+  }
 
   const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
     cfg: params.cfg,
@@ -562,6 +501,8 @@ export async function processMessage(params: {
           cfg: params.cfg,
           connectionId: params.connectionId,
           context: ctxPayload,
+          msg: params.msg,
+          authDir: account.authDir,
           deliverReply: deliverWebReply,
           groupHistories: params.groupHistories,
           groupHistoryKey: params.groupHistoryKey,

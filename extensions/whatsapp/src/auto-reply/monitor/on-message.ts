@@ -23,6 +23,7 @@ import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
 import { resolvePeerId } from "./peer.js";
+import { emitPreGateWhatsAppGroupObservation } from "./pre-gate-observation.js";
 import { processMessage } from "./process-message.js";
 import {
   createWhatsAppStatusReactionController,
@@ -88,6 +89,7 @@ export function createWebOnMessageHandler(params: {
       ackAlreadySent?: boolean;
       ackReaction?: AckReactionHandle | null;
       statusReactionController?: StatusReactionController | null;
+      messageReceivedEmitted?: boolean;
     },
   ) => {
     const processParams: Parameters<typeof processMessage>[0] = {
@@ -124,6 +126,9 @@ export function createWebOnMessageHandler(params: {
     }
     if (opts?.statusReactionController !== undefined) {
       processParams.statusReactionController = opts.statusReactionController;
+    }
+    if (opts?.messageReceivedEmitted === true) {
+      processParams.messageReceivedEmitted = true;
     }
     return processMessage(processParams);
   };
@@ -200,6 +205,7 @@ export function createWebOnMessageHandler(params: {
     let ackReaction: AckReactionHandle | null = null;
     let statusReactionController: StatusReactionController | null = null;
     let recordAcceptedConfiguredGroupRoute: (() => void) | null = null;
+    let preGateObservationEmitted = false;
     const clearPreDispatchReaction = async () => {
       try {
         if (statusReactionController) {
@@ -321,6 +327,20 @@ export function createWebOnMessageHandler(params: {
       // message first; configured ACP routes also wait for backend readiness.
       recordAcceptedConfiguredGroupRoute = recordGroupRoute;
 
+      // Emit before gating so ordinary, unmentioned group traffic remains
+      // observable. This path has no turn/ack/outbound/paid-model side effects.
+      try {
+        await emitPreGateWhatsAppGroupObservation({
+          cfg,
+          msg,
+          route,
+          sessionKey: route.sessionKey,
+        });
+        preGateObservationEmitted = true;
+      } catch (err) {
+        params.replyLogger.warn(`whatsapp: pre-gate group observation failed: ${String(err)}`);
+      }
+
       let gating = await applyGroupGating({
         cfg,
         msg,
@@ -419,7 +439,11 @@ export function createWebOnMessageHandler(params: {
         ...(statusReactionController && conversationKind !== "group"
           ? { ackAlreadySent: true }
           : {}),
-        processMessage: (m, r, k, opts) => processForRoute(cfg, m, r, k, opts),
+        processMessage: (m, r, k, opts) =>
+          processForRoute(cfg, m, r, k, {
+            ...opts,
+            ...(preGateObservationEmitted ? { messageReceivedEmitted: true } : {}),
+          }),
       }))
     ) {
       return;
@@ -432,6 +456,7 @@ export function createWebOnMessageHandler(params: {
       ...(ackAlreadySent ? { ackAlreadySent: true } : {}),
       ...(ackReaction ? { ackReaction } : {}),
       ...(statusReactionController ? { statusReactionController } : {}),
+      ...(preGateObservationEmitted ? { messageReceivedEmitted: true } : {}),
     });
   };
 }

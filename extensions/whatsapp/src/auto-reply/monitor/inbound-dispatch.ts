@@ -34,6 +34,11 @@ import type {
 import { createWhatsAppReplyTransportContext } from "../deliver-reply.js";
 import { markWhatsAppVisibleDeliveryError } from "../util.js";
 import { formatGroupMembers } from "./group-members.js";
+import { formatAuthoritativeGroupReplyText } from "./group-participant-name.js";
+import {
+  createExplicitOwnerReplyDeliveryGate,
+  EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+} from "./group-reply-once.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 import {
   projectPreparedChannelInbound,
@@ -615,6 +620,8 @@ export function createWhatsAppReplyPlan(params: {
   cfg: ReturnType<LoadConfigFn>;
   connectionId: string;
   context: FinalizedMsgContext;
+  msg?: AdmittedWebInboundMessage;
+  authDir?: string;
   deliverReply: (params: {
     replyResult: ReplyPayload;
     normalizedReplyResult?: DeliverableWhatsAppOutboundPayload<ReplyPayload>;
@@ -664,6 +671,64 @@ export function createWhatsAppReplyPlan(params: {
   let didSendReply = false;
   let didLogHeartbeatStrip = false;
 
+  const explicitOwnerReplyDeliveryGate = params.msg
+    ? createExplicitOwnerReplyDeliveryGate({
+        msg: params.msg,
+        authDir: params.authDir,
+      })
+    : undefined;
+  const claimExplicitOwnerReplyDeliveryAllowed = (): boolean => {
+    if (!explicitOwnerReplyDeliveryGate?.hasTurnEligibility()) {
+      return true;
+    }
+    const decision = explicitOwnerReplyDeliveryGate.claimForDelivery();
+    if (decision.status === "authorized") {
+      params.replyLogger.info(
+        {
+          trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+          decision: "authorized",
+          conversationId,
+          groupId: decision.authorization.groupId,
+          targetParticipantId: decision.authorization.target.participantId,
+          targetDisplayName: decision.authorization.target.displayName ?? null,
+          quotedMessageId: decision.authorization.quotedMessageId,
+          ownerSenderId: decision.authorization.ownerSenderId,
+          ownerTriggerMessageId: decision.authorization.ownerTriggerMessageId,
+        },
+        "explicit owner-delegated group reply delivery authorized",
+      );
+      return true;
+    }
+    if (decision.status === "denied") {
+      params.replyLogger.warn(
+        {
+          trigger: EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+          decision: "denied",
+          reason: decision.reason,
+          conversationId,
+        },
+        "explicit owner-delegated group reply delivery denied",
+      );
+      return false;
+    }
+    return true;
+  };
+  const prepareAuthoritativeGroupReplyPayload = (
+    payload: DeliverableWhatsAppOutboundPayload<ReplyPayload>,
+  ): DeliverableWhatsAppOutboundPayload<ReplyPayload> => {
+    if (params.msg?.groupReplyOnce !== undefined && payload.text !== undefined) {
+      return {
+        ...payload,
+        text: formatAuthoritativeGroupReplyText({
+          body: payload.text,
+          displayName: params.msg.groupReplyOnce.target.displayName,
+          otherParticipantNames: params.msg.groupReplyOnce.target.otherParticipantNames,
+        }),
+      };
+    }
+    return payload;
+  };
+
   const recordDeliveredPayload = (
     payload: DeliverableWhatsAppOutboundPayload<ReplyPayload>,
   ): void => {
@@ -680,15 +745,20 @@ export function createWhatsAppReplyPlan(params: {
     info: ReplyDeliveryInfo,
     options?: { recordDelivery?: boolean; onMediaAccepted?: (mediaUrl: string) => void },
   ): Promise<WhatsAppReplyDeliveryVisibility> => {
-    const reply = resolveSendableOutboundReplyParts(normalizedDeliveryPayload);
+    const authoritativeDeliveryPayload =
+      prepareAuthoritativeGroupReplyPayload(normalizedDeliveryPayload);
+    if (!claimExplicitOwnerReplyDeliveryAllowed()) {
+      return whatsAppReplyDeliveryVisibility(false);
+    }
+    const reply = resolveSendableOutboundReplyParts(authoritativeDeliveryPayload);
     if (!reply.hasMedia && !reply.text.trim()) {
       return whatsAppReplyDeliveryVisibility(false);
     }
     let delivery: WhatsAppReplyDeliveryResult;
     try {
       delivery = await params.deliverReply({
-        replyResult: normalizedDeliveryPayload,
-        normalizedReplyResult: normalizedDeliveryPayload,
+        replyResult: authoritativeDeliveryPayload,
+        normalizedReplyResult: authoritativeDeliveryPayload,
         transport: params.transport,
         mediaLocalRoots,
         maxMediaBytes: params.maxMediaBytes,
@@ -729,7 +799,7 @@ export function createWhatsAppReplyPlan(params: {
       return result;
     }
     if (options?.recordDelivery !== false) {
-      recordDeliveredPayload(normalizedDeliveryPayload);
+      recordDeliveredPayload(authoritativeDeliveryPayload);
     }
     return result;
   };

@@ -6,6 +6,7 @@ import { defaultRuntime } from "openclaw/plugin-sdk/runtime-env";
 import { warnMissingProviderGroupPolicyFallbackOnce } from "openclaw/plugin-sdk/runtime-group-policy";
 import { resolveWhatsAppInboundPolicy, resolveWhatsAppIngressAccess } from "../inbound-policy.js";
 import { buildWhatsAppInboundAdmission, type WhatsAppInboundAdmission } from "./admission.js";
+import { emitBlockedWhatsAppGroupObservation } from "./observation.js";
 
 type BlockedInboundAccessControlResult = {
   allowed: false;
@@ -122,6 +123,18 @@ export async function checkInboundAccessControl(params: {
         `Blocked group message from ${params.senderE164 ?? "unknown sender"} (groupPolicy: allowlist)`,
       );
     }
+    emitBlockedWhatsAppGroupObservation({
+      cfg: params.cfg,
+      accountId: policy.account.accountId,
+      selfE164: params.selfE164,
+      body: "",
+      remoteJid: params.remoteJid,
+      participantJid: params.senderJid ?? undefined,
+      senderE164: params.senderE164,
+      groupSubject: undefined,
+      messageTimestampMs: params.messageTimestampMs,
+      pushName: params.pushName,
+    });
     return blockedInboundAccess(policy);
   }
 

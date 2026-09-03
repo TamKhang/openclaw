@@ -23,6 +23,7 @@ import type {
   PluginSessionActionRegistryRegistration,
   PluginTrustedToolPolicyRegistryRegistration,
 } from "./registry-types.js";
+import { normalizeSafeReadProjection } from "./safe-read-projection.js";
 import { validateJsonSchemaValue, type JsonSchemaValue } from "./schema-validator.js";
 import { normalizeSessionEntrySlotKey } from "./session-entry-slot-keys.js";
 import {
@@ -295,6 +296,19 @@ export function createHostRegistrars(state: PluginRegistryState) {
       );
       return;
     }
+    const safeReadProjection =
+      metadata.safeReadProjection === undefined
+        ? undefined
+        : normalizeSafeReadProjection(metadata.safeReadProjection);
+    if (safeReadProjection !== undefined && !safeReadProjection.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `tool metadata registration has invalid safe-read projection: ${toolName}: ${safeReadProjection.error}`,
+      });
+      return;
+    }
     registry.toolMetadata.push({
       pluginId: record.id,
       pluginName: record.name,
@@ -304,6 +318,7 @@ export function createHostRegistrars(state: PluginRegistryState) {
         ...(displayName !== undefined ? { displayName } : {}),
         ...(description !== undefined ? { description } : {}),
         ...(tags !== undefined ? { tags } : {}),
+        ...(safeReadProjection?.ok ? { safeReadProjection: safeReadProjection.value } : {}),
       },
       source: record.source,
       rootDir: record.rootDir,

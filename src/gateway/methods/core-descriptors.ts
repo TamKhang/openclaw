@@ -644,6 +644,10 @@ const CORE_GATEWAY_METHOD_SPECS = [
   // its required `addedBy` response contract remain unchanged.
   ["session.members.listEvidence", "sessions-sharing", "operator.read", "2026.8"],
   ["plugins.inspect", "plugins", "operator.read", "2026.8"],
+  // Fixed plugin-tool read projections are additive and read-only; append so
+  // existing advertised method indices remain stable.
+  ["projection.read", "read-projection", "operator.read", "2026.8"],
+  ["projection.status", "read-projection", "operator.read", "2026.8"],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];
 
 export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS)[number][1], null>;

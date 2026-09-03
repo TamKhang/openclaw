@@ -79,10 +79,12 @@ type CanonicalInboundMessageHookContext = {
   guildId?: string;
   channelName?: string;
   isGroup: boolean;
+  groupSubject?: string;
   groupId?: string;
   topicName?: string;
   location?: PluginHookInboundClaimEvent["location"];
   providerUpdate?: PluginHookInboundClaimEvent["providerUpdate"];
+  outboundGroupReplyAuthorization?: import("../plugins/hook-message.types.js").PluginHookOutboundGroupReplyAuthorization;
   trace?: DiagnosticTraceContext;
   callDepth?: number;
 };
@@ -102,6 +104,7 @@ type CanonicalSentMessageHookContext = {
   callDepth?: number;
   isGroup?: boolean;
   groupId?: string;
+  outboundGroupReplyAuthorization?: import("../plugins/hook-message.types.js").PluginHookOutboundGroupReplyAuthorization;
 };
 
 function assignRemoteMediaStagingMetadata(
@@ -159,6 +162,7 @@ export function deriveInboundMessageHookContext(
     ctx.To ??
     ctx.From ??
     internalSessionConversationId(channelId, ctx.SessionKey);
+  const groupSubject = readNonBlankString(ctx.GroupSubject)?.trim();
   const isGroup = Boolean(ctx.GroupSubject || ctx.GroupChannel);
   const media = normalizeMediaFacts(ctx.media);
   const hookMedia = projectMessageHookMediaFacts(media);
@@ -181,6 +185,7 @@ export function deriveInboundMessageHookContext(
       : undefined;
   const providerUpdateId = normalizeOptionalString(ctx.ProviderUpdateId);
   const providerUpdateKind = normalizeOptionalString(ctx.ProviderUpdateKind);
+  const outboundGroupReplyAuthorization = ctx.OutboundGroupReplyAuthorization;
   return {
     from: ctx.From ?? "",
     to: ctx.To,
@@ -228,8 +233,10 @@ export function deriveInboundMessageHookContext(
     guildId: ctx.GroupSpace,
     channelName: ctx.GroupChannel,
     isGroup,
+    groupSubject,
     groupId: isGroup ? conversationId : undefined,
     topicName: ctx.TopicName,
+    outboundGroupReplyAuthorization,
     ...(hasLocation
       ? {
           location: {
@@ -285,6 +292,7 @@ export function buildCanonicalSentMessageHookContext(params: {
   callDepth?: number;
   isGroup?: boolean;
   groupId?: string;
+  outboundGroupReplyAuthorization?: import("../plugins/hook-message.types.js").PluginHookOutboundGroupReplyAuthorization;
 }): CanonicalSentMessageHookContext {
   return {
     to: params.to,
@@ -301,6 +309,7 @@ export function buildCanonicalSentMessageHookContext(params: {
     callDepth: params.callDepth,
     isGroup: params.isGroup,
     groupId: params.groupId,
+    outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
   };
 }
 
@@ -379,6 +388,9 @@ export function toPluginMessageContext(
   assignTraceFields(context, canonical.trace);
   if (canonical.callDepth != null) {
     context.callDepth = canonical.callDepth;
+  }
+  if (canonical.outboundGroupReplyAuthorization) {
+    context.outboundGroupReplyAuthorization = canonical.outboundGroupReplyAuthorization;
   }
   return context;
 }
@@ -509,6 +521,7 @@ function buildPluginInboundClaimEvent(
       mediaUrls: canonical.mediaStagingPending ? undefined : canonical.mediaUrls,
       mediaTypes: canonical.mediaStagingPending ? undefined : canonical.mediaTypes,
       guildId: canonical.guildId,
+      groupSubject: canonical.groupSubject,
       channelName: canonical.channelName,
       groupId: canonical.groupId,
       topicName: canonical.topicName,
@@ -583,6 +596,7 @@ export function toPluginMessageReceivedEvent(
       mediaUrls: canonical.mediaStagingPending ? undefined : canonical.mediaUrls,
       mediaTypes: canonical.mediaStagingPending ? undefined : canonical.mediaTypes,
       guildId: canonical.guildId,
+      groupSubject: canonical.groupSubject,
       channelName: canonical.channelName,
       topicName: canonical.topicName,
     },
@@ -605,6 +619,9 @@ export function toPluginMessageSentEvent(
     ...(canonical.sessionKey ? { sessionKey: canonical.sessionKey } : {}),
     ...(canonical.runId ? { runId: canonical.runId } : {}),
     ...(canonical.error ? { error: canonical.error } : {}),
+    ...(canonical.outboundGroupReplyAuthorization
+      ? { outboundGroupReplyAuthorization: canonical.outboundGroupReplyAuthorization }
+      : {}),
   };
   assignTraceFields(event, canonical.trace);
   return event;

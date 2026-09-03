@@ -8,6 +8,7 @@ import type {
 } from "../media-understanding/types.js";
 import type { MediaFact } from "../media/media-facts.js";
 import type { PluginHookChannelContext } from "../plugins/hook-channel-context.types.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../plugins/hook-message.types.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
 import type { CommandTurnContext } from "./command-turn-context.js";
 import type { CommandArgs } from "./commands-args.types.js";
@@ -387,6 +388,12 @@ export type MsgContext = Partial<CanonicalInboundText> & {
   ConversationAvatar?: string;
   /** Channel-owned metadata exposed to plugin hook context, not prompt text. */
   ChannelContext?: PluginHookChannelContext;
+  /**
+   * Trusted internal-only outbound group-reply authorization marker set by
+   * channel feature code after exact owner/target validation. Never derived
+   * from message text, prompt text, quoted content, or model output.
+   */
+  OutboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
   /** Provider-native chat/conversation id used by channel plugins that expose `chat_id`. */
   ChatId?: string;
   /** Stable provider-native direct-peer id when a DM room/user mapping must survive later writes. */
