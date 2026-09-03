@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runChannelInboundEventMock = vi.hoisted(() => vi.fn());
@@ -27,6 +28,10 @@ vi.mock("../identity.js", () => ({
 }));
 
 import { emitPreGateWhatsAppGroupObservation } from "../auto-reply/monitor/pre-gate-observation.js";
+import {
+  attachWhatsAppPassiveHistorySyncCapture,
+  WHATSAPP_PASSIVE_HISTORY_SYNC_EVENT,
+} from "./history-sync-capture.js";
 import { emitBlockedWhatsAppGroupObservation } from "./observation.js";
 
 const preGateMsg = {
@@ -73,6 +78,33 @@ describe("passive WhatsApp observation model safety", () => {
       remoteJid: "group@g.us",
       senderE164: "+15550000002",
     });
+    expect(runChannelInboundEventMock).not.toHaveBeenCalled();
+  });
+
+  it("passive history sync never reaches channel inbound model execution", () => {
+    const events = new EventEmitter();
+    const onHistoryMessage = vi.fn();
+    attachWhatsAppPassiveHistorySyncCapture({
+      events,
+      accountId: "default",
+      isEnabled: () => true,
+      groupSubjectFor: () => undefined,
+      onHistoryMessage,
+    });
+    events.emit(WHATSAPP_PASSIVE_HISTORY_SYNC_EVENT, {
+      messages: [
+        {
+          key: {
+            remoteJid: "group@g.us",
+            id: "history-1",
+            participant: "sender@s.whatsapp.net",
+          },
+          messageTimestamp: 1_700_000_000,
+          message: { conversation: "historical group message" },
+        },
+      ],
+    });
+    expect(onHistoryMessage).toHaveBeenCalledTimes(1);
     expect(runChannelInboundEventMock).not.toHaveBeenCalled();
   });
 });
