@@ -141,6 +141,7 @@ function createQueuedDelivery(
     legacyUnknownSendReconciliation: params.legacyUnknownSendReconciliation,
     legacyPreparedContentUnavailable: params.legacyPreparedContentUnavailable,
     maxRetries: params.maxRetries,
+    outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
     retryCount: 0,
     attemptCount: 0,
   };

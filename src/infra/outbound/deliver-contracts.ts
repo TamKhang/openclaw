@@ -11,6 +11,7 @@ import type { ReplyToMode } from "../../config/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ReplyPayloadDeliveryPin } from "../../interactive/payload.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import type { DeliveryQueueCompletionRetention } from "../delivery-queue-sqlite.js";
 import type { OutboundDeliveryResult, OutboundPayloadDeliveryOutcome } from "./deliver-types.js";
 import type { DurableDeliveryCompletion } from "./delivery-completion.js";
@@ -170,6 +171,8 @@ export type DeliverOutboundPayloadsCoreParams = {
   runId?: string;
   /** @internal Exact admitted execution provenance copied into durable custody. */
   executionIdentityToken?: ExecutionIdentityAdmissionToken;
+  /** @internal Replay-safe owner-delegated group-reply authorization evidence. */
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
   /** @internal Canonical post-policy batch used by queue recovery and physical delivery. */
   preparedBatch?: PreparedOutboundBatch;
   reply?: OutboundReplyFacts;

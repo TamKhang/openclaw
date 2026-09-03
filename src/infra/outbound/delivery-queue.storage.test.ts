@@ -875,6 +875,33 @@ describe("delivery-queue storage", () => {
       expect(entry.gatewayClientScopes).toEqual(["operator.write"]);
     });
 
+    it("persists outbound group reply authorization evidence for recovery", async () => {
+      const id = await enqueueTextDelivery({
+        channel: "whatsapp",
+        to: "group@g.us",
+        payloads: [{ text: "authorized reply" }],
+        outboundGroupReplyAuthorization: {
+          capability: "whatsapp.group.reply_once",
+          token: "token",
+          groupId: "group@g.us",
+          chatId: "group@g.us",
+          ownerTriggerMessageId: "trigger",
+          quotedMessageId: "quoted",
+          targetParticipantId: "+15550000002",
+        },
+      });
+
+      expect(readQueuedEntry(tmpDir(), id).outboundGroupReplyAuthorization).toEqual({
+        capability: "whatsapp.group.reply_once",
+        token: "token",
+        groupId: "group@g.us",
+        chatId: "group@g.us",
+        ownerTriggerMessageId: "trigger",
+        quotedMessageId: "quoted",
+        targetParticipantId: "+15550000002",
+      });
+    });
+
     it("persists session context for recovery replay", async () => {
       const id = await enqueueTextDelivery(
         {

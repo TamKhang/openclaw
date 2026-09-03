@@ -15,6 +15,7 @@ import {
   toPluginMessageContext,
 } from "../../hooks/message-hook-mappers.js";
 import { hasOutboundReplyContent } from "../../plugin-sdk/reply-payload.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { formatErrorMessage } from "../errors.js";
 import { normalizeEmptyPayloadForDelivery } from "./deliver-payload.js";
@@ -136,6 +137,7 @@ export async function applyMessageSendingHook(params: {
   replyToId?: string | null;
   threadId?: string | number | null;
   sessionKey?: string;
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 }): Promise<{
   cancelled: boolean;
   cancelReason?: string;
@@ -170,6 +172,9 @@ export async function applyMessageSendingHook(params: {
         accountId: params.accountId ?? undefined,
         conversationId: params.to,
         ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+        ...(params.outboundGroupReplyAuthorization
+          ? { outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization }
+          : {}),
       },
     );
     if (sendingResult?.cancel) {

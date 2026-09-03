@@ -865,6 +865,7 @@ export function createWhatsAppReplyPlan(params: {
           currentMessageId: params.transport.correlationId,
           payload,
         }),
+        outboundGroupReplyAuthorization: params.context.OutboundGroupReplyAuthorization,
         formatting: {
           textLimit,
           tableMode,

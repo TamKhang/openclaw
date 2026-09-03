@@ -18,11 +18,16 @@ import {
   createWhatsAppGroupMetadataCacheOwner,
   type WhatsAppGroupMetadataCache,
 } from "./group-metadata-cache.js";
+import { attachWhatsAppPassiveHistorySyncCapture } from "./history-sync-capture.js";
 import { closeInboundMonitorSocket } from "./lifecycle.js";
 import {
   createWhatsAppMessageDeliveryCoordinator,
   type WhatsAppAppendReplyWindow,
 } from "./message-delivery.js";
+import {
+  emitWhatsAppPassiveHistoryReceivedHookIfEnabled,
+  isWhatsAppPassiveHistorySyncCaptureEnabled,
+} from "./observation.js";
 import { createWebSendApi } from "./send-api.js";
 import { createWhatsAppAttachedSocketSession } from "./socket-session.js";
 import type { AdmittedWebInboundCallbackMessage } from "./types.js";
@@ -119,6 +124,28 @@ export async function attachWebInboxToSocket(
       inboundConsoleLog.warn(`Failed hydrating participating groups on connect: ${error}`);
     },
   });
+  const detachPassiveHistorySync = attachWhatsAppPassiveHistorySyncCapture({
+    events: options.sock.ev as unknown as {
+      on: (event: string, listener: (payload: unknown) => void) => void;
+      off?: (event: string, listener: (payload: unknown) => void) => void;
+      removeListener?: (event: string, listener: (payload: unknown) => void) => void;
+    },
+    accountId: options.accountId,
+    isEnabled: () =>
+      isWhatsAppPassiveHistorySyncCaptureEnabled({
+        cfg: options.loadConfig?.() ?? options.cfg,
+        accountId: options.accountId,
+      }),
+    groupSubjectFor: () => undefined,
+    onHistoryMessage: ({ event, context }) => {
+      emitWhatsAppPassiveHistoryReceivedHookIfEnabled({
+        cfg: options.loadConfig?.() ?? options.cfg,
+        accountId: options.accountId,
+        event,
+        context,
+      });
+    },
+  });
   const delivery = createWhatsAppMessageDeliveryCoordinator({
     cfg: options.cfg,
     loadConfig: options.loadConfig,
@@ -151,6 +178,7 @@ export async function attachWebInboxToSocket(
   return {
     close: async () => {
       delivery.stopIntake();
+      detachPassiveHistorySync();
       socketSession.stop();
       groupMetadata.close();
       try {

@@ -327,6 +327,7 @@ function buildRecoveryDeliverParams(
     skipQueue: true, // Prevent re-enqueueing during recovery.
     deferredDeliveryAdmissionPassed: true,
     deferCommitHooks: true,
+    outboundGroupReplyAuthorization: entry.outboundGroupReplyAuthorization,
   } satisfies Parameters<DeliverFn>[0];
 }
 

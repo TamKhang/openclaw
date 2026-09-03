@@ -7,6 +7,7 @@ import type {
   RenderedMessageBatchPlanItem,
 } from "../../channels/message/types.js";
 import type { ReplyToMode } from "../../config/types.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import type { PluginHookReplyPayloadSendingContext } from "../../plugins/hook-types.js";
 import type { DeliveryQueueCompletionRetention } from "../delivery-queue-sqlite.js";
 import type { DurableDeliveryCompletion } from "./delivery-completion.js";
@@ -66,6 +67,7 @@ export type QueuedDeliveryPayload = {
   >;
   legacyPreparedContentUnavailable?: true;
   maxRetries?: number;
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 };
 
 type LegacyQueuedDeliveryPayload = Omit<QueuedDeliveryPayload, "preparedBatch" | "payloads"> & {

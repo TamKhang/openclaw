@@ -3,6 +3,7 @@ import { resolveChunkMode, resolveTextChunkLimit } from "../../auto-reply/chunk.
 import { payloadRequiresDurablePayloadTransport } from "../../channels/message/capabilities.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { getOrCreatePromise } from "../../shared/lazy-promise.js";
 import { diagnosticErrorCategory } from "../diagnostic-error-metadata.js";
 import {
@@ -46,6 +47,38 @@ import { createReplyToDeliveryPolicy } from "./reply-policy.js";
 
 const log = createSubsystemLogger("outbound/deliver");
 
+export function assertOutboundGroupReplyAuthorization(params: {
+  to: string;
+  channel: string;
+  authorization?: PluginHookOutboundGroupReplyAuthorization;
+}): void {
+  const auth = params.authorization;
+  if (!auth) {
+    return;
+  }
+  const fields = {
+    capability: auth.capability,
+    token: auth.token,
+    groupId: auth.groupId,
+    chatId: auth.chatId,
+    ownerTriggerMessageId: auth.ownerTriggerMessageId,
+    quotedMessageId: auth.quotedMessageId,
+    targetParticipantId: auth.targetParticipantId,
+  } as const;
+  const malformed = Object.entries(fields).some(
+    ([, value]) => typeof value !== "string" || value.trim().length === 0,
+  );
+  if (malformed || fields.capability !== "whatsapp.group.reply_once") {
+    throw new Error("invalid outbound group reply authorization");
+  }
+  if (params.channel !== "whatsapp") {
+    throw new Error("outbound group reply authorization is only valid for whatsapp");
+  }
+  if (fields.chatId !== params.to && fields.groupId !== params.to) {
+    throw new Error("outbound group reply authorization target mismatch");
+  }
+}
+
 export async function deliverOutboundPayloadsCore(
   params: DeliverOutboundPayloadsCoreParams,
 ): Promise<OutboundDeliveryResult[]> {
@@ -54,6 +87,11 @@ export async function deliverOutboundPayloadsCore(
   if (!preparedBatch) {
     throw new Error("Outbound delivery requires a prepared payload batch");
   }
+  assertOutboundGroupReplyAuthorization({
+    to,
+    channel,
+    authorization: params.outboundGroupReplyAuthorization,
+  });
   const accountId = params.accountId;
   const reply = params.reply;
   const deps = params.deps;
@@ -475,6 +513,7 @@ export async function deliverOutboundPayloadsCore(
         success: deliveredResults.length > 0,
         content: payloadSummary.hookContent ?? payloadSummary.text,
         messageId: lastMessageId,
+        outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
       });
       await maybePinDeliveredMessage({
         handler: deliveryHandler,
@@ -520,6 +559,7 @@ export async function deliverOutboundPayloadsCore(
         success: false,
         content: payloadSummary.hookContent ?? payloadSummary.text,
         error: formatErrorMessage(err),
+        outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
         ...(failedPayloadResults.at(-1)?.messageId
           ? { messageId: failedPayloadResults.at(-1)!.messageId }
           : {}),

@@ -206,7 +206,14 @@ export type ChannelDeliveryResult = ChannelDeliveryOutcome & {
 /** Durable outbound delivery options available to channel turn delivery adapters. */
 type ChannelTurnDurableDeliveryOptions = Pick<
   DeliverOutboundPayloadsParams,
-  "deps" | "formatting" | "identity" | "mediaAccess" | "replyToMode" | "silent" | "threadId"
+  | "deps"
+  | "formatting"
+  | "identity"
+  | "mediaAccess"
+  | "replyToMode"
+  | "silent"
+  | "threadId"
+  | "outboundGroupReplyAuthorization"
 > & {
   to?: string | null;
   replyToId?: string | null;

@@ -27,7 +27,14 @@ import type { ChannelDeliveryInfo, ChannelDeliveryResult } from "./types.js";
 /** Options controlling durable final delivery for inbound channel replies. */
 export type DurableInboundReplyDeliveryOptions = Pick<
   DeliverOutboundPayloadsParams,
-  "deps" | "formatting" | "identity" | "mediaAccess" | "replyToMode" | "silent" | "threadId"
+  | "deps"
+  | "formatting"
+  | "identity"
+  | "mediaAccess"
+  | "replyToMode"
+  | "silent"
+  | "threadId"
+  | "outboundGroupReplyAuthorization"
 > & {
   to?: string | null;
   replyToId?: string | null;
@@ -235,6 +242,7 @@ export async function deliverInboundReplyWithMessageSendContextCore(
       : {}),
     session,
     gatewayClientScopes: params.ctxPayload.GatewayClientScopes ?? [],
+    outboundGroupReplyAuthorization: params.ctxPayload.OutboundGroupReplyAuthorization,
   });
   if (send.status === "failed") {
     return { status: "failed" as const, error: send.error };

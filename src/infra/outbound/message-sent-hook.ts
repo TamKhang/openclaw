@@ -7,6 +7,7 @@ import {
   toPluginMessageSentEvent,
 } from "../../hooks/message-hook-mappers.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 
 const log = createSubsystemLogger("outbound/message-sent-hook");
@@ -16,6 +17,7 @@ export type MessageSentEvent = {
   content: string;
   error?: string;
   messageId?: string;
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 };
 
 /** Creates a best-effort emitter shared by direct and inbound-turn delivery owners. */
@@ -29,6 +31,7 @@ export function createMessageSentEmitter(params: {
   isGroup?: boolean;
   groupId?: string;
   logPrefix: string;
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
 }): { emitMessageSent: (event: MessageSentEvent) => void; hasMessageSentHooks: boolean } {
   const hasMessageSentHooks = params.hookRunner?.hasHooks("message_sent") ?? false;
   const canEmitInternalHook = Boolean(params.sessionKeyForInternalHooks);
@@ -51,6 +54,7 @@ export function createMessageSentEmitter(params: {
       messageId: event.messageId,
       isGroup: params.isGroup,
       groupId: params.groupId,
+      outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
     });
     if (hasMessageSentHooks) {
       fireAndForgetHook(

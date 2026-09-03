@@ -109,6 +109,7 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
     groupId: params.mirror?.groupId,
     runId: params.preparedBatch?.runId,
     logPrefix: OUTBOUND_DELIVERY_LOG_SCOPE,
+    outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
   });
   if (hasMessageSentHooks && params.session?.agentId && !sessionKeyForInternalHooks) {
     log.warn(

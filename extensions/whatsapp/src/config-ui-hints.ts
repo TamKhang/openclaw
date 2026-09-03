@@ -29,6 +29,10 @@ export const whatsAppChannelConfigUiHints = {
     label: "WhatsApp Plugin Hooks",
     help: "Opt in to broadcasting inbound WhatsApp events to plugins. Payloads carry personal content, so only enable it for plugins you trust.",
   },
+  "pluginHooks.historySyncCapture": {
+    label: "WhatsApp Passive History Sync Capture",
+    help: "Passively emit group-only messaging-history.set events through message_received hooks. Observation-only; never starts a turn or sends outbound traffic.",
+  },
   ...createChannelConfigUiHints({ channelLabel: "WhatsApp", configWrites: true }),
   "actions.calls": {
     label: "WhatsApp Voice Calls",

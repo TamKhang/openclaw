@@ -26,6 +26,10 @@
           "messageReceived": {
             "type": "boolean",
             "description": "Opt in to broadcasting inbound WhatsApp message_received hook payloads to loaded plugins."
+          },
+          "historySyncCapture": {
+            "type": "boolean",
+            "description": "Opt in to passive observation-only capture of group messaging-history.set events. Defaults to false."
           }
         }
       }
