@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AgentToolResult } from "../agents/runtime/index.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type {
@@ -20,11 +21,12 @@ type ToolExecute = (
   params: unknown,
   signal?: AbortSignal,
   onUpdate?: unknown,
-) => Promise<unknown>;
+) => Promise<AgentToolResult<unknown>>;
 
 function createSourceStatusTool(
   execute: ToolExecute = async () => ({
     content: [{ type: "text", text: JSON.stringify({ status: "ok" }) }],
+    details: undefined,
   }),
 ) {
   return {
@@ -212,6 +214,7 @@ describe("fixed read-projection boundary", () => {
         factory: () =>
           createSourceStatusTool(async () => ({
             content: [{ type: "text", text: "not-json" }],
+            details: undefined,
           })),
       },
     });
@@ -235,6 +238,7 @@ describe("fixed read-projection boundary", () => {
         factory: () =>
           createSourceStatusTool(async () => ({
             content: [{ type: "text", text: JSON.stringify({ data: large }) }],
+            details: undefined,
           })),
       },
     });
@@ -254,7 +258,8 @@ describe("fixed read-projection boundary", () => {
   it("fails closed on timeout", async () => {
     const registry = createSafeRegistry({
       tool: {
-        factory: () => createSourceStatusTool(async () => new Promise<never>(() => {})),
+        factory: () =>
+          createSourceStatusTool(async () => new Promise<AgentToolResult<unknown>>(() => {})),
       },
     });
     const outcome = await invokeReadProjectionFromRegistry({
@@ -272,8 +277,9 @@ describe("fixed read-projection boundary", () => {
   });
 
   it("exposes bounded registration introspection without executing tools", () => {
-    const execute = vi.fn(async () => ({
+    const execute = vi.fn<ToolExecute>(async () => ({
       content: [{ type: "text", text: JSON.stringify({ status: "ok" }) }],
+      details: undefined,
     }));
     const registry = createSafeRegistry({
       tool: { factory: () => createSourceStatusTool(execute) },
