@@ -100,6 +100,7 @@ export function attachWhatsAppPassiveHistorySyncCapture(params: {
     if (!params.isEnabled() || !payload || typeof payload !== "object") {
       return;
     }
+    // SAFETY: payload is a non-null object (guarded above); only the optional messages array is read, then Array.isArray-checked before iteration.
     const messages = (payload as HistorySyncSetPayload).messages;
     if (!Array.isArray(messages)) {
       return;

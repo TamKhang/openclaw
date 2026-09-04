@@ -213,12 +213,12 @@ function isAgentTool(value: unknown): value is {
     onUpdate?: unknown,
   ) => Promise<unknown>;
 } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { name?: unknown }).name === "string" &&
-    typeof (value as { execute?: unknown }).execute === "function"
-  );
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  // SAFETY: value is a non-null object (guarded above); name and execute are probed before use.
+  const record = value as Record<string, unknown>;
+  return typeof record.name === "string" && typeof record.execute === "function";
 }
 
 function sanitizeJsonValue(value: unknown, seen: WeakSet<object>, depth: number): unknown {
@@ -255,10 +255,12 @@ function sanitizeJsonValue(value: unknown, seen: WeakSet<object>, depth: number)
   if (keys.length > READ_PROJECTION_MAX_ITEMS) {
     throw new Error("oversized response");
   }
-  const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  const output: Record<string, unknown> = Object.create(null);
   for (const key of keys) {
+    // SAFETY: value is a non-null, non-array object with a safe prototype (verified above); key is one of its own Object.keys entries.
+    const entry = (value as Record<string, unknown>)[key];
     Object.defineProperty(output, key, {
-      value: sanitizeJsonValue((value as Record<string, unknown>)[key], seen, depth + 1),
+      value: sanitizeJsonValue(entry, seen, depth + 1),
       enumerable: true,
       configurable: true,
       writable: true,
@@ -271,6 +273,7 @@ function extractReadProjectionResult(rawResult: unknown): unknown {
   if (typeof rawResult !== "object" || rawResult === null) {
     throw new Error("malformed response");
   }
+  // SAFETY: rawResult is a non-null object (guarded above); only details and content are read.
   const result = rawResult as {
     details?: unknown;
     content?: unknown;
@@ -286,6 +289,7 @@ function extractReadProjectionResult(rawResult: unknown): unknown {
     if (typeof block !== "object" || block === null) {
       continue;
     }
+    // SAFETY: block is a non-null object (guarded above); only type and text are probed.
     const candidate = block as { type?: unknown; text?: unknown };
     if (candidate.type === "text" && typeof candidate.text === "string") {
       textParts.push(candidate.text);
@@ -340,6 +344,7 @@ async function resolveAndExecuteTool(params: {
   try {
     tool = await withTimeout(
       Promise.resolve().then(() =>
+        // SAFETY: registry is always a full PluginRegistry at runtime (production and test callers construct complete registries); the Pick view only narrows reads and the scope helper only stores the reference.
         withPluginRuntimeRegistryScope(registry as PluginRegistry, () =>
           withPluginRuntimePluginScope(
             {

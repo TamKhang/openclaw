@@ -29,6 +29,7 @@ export function normalizeSafeReadProjection(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { ok: false, error: "safe-read projection must be an object" };
   }
+  // SAFETY: value is a non-null, non-array object (guarded above); capabilities is read and validated below.
   const record = value as Record<string, unknown>;
   const rawCapabilities = record.capabilities;
   if (!Array.isArray(rawCapabilities) || rawCapabilities.length === 0) {
@@ -44,6 +45,7 @@ export function normalizeSafeReadProjection(
       return { ok: false, error: "safe-read projection contains duplicate capabilities" };
     }
     seen.add(capability);
+    // SAFETY: capability is a string verified present in CAPABILITY_SET, which is derived from SAFE_READ_PROJECTION_CAPABILITIES.
     capabilities.push(capability as SafeReadProjectionCapability);
   }
   return { ok: true, value: { capabilities } };

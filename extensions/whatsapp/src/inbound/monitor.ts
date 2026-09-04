@@ -125,6 +125,7 @@ export async function attachWebInboxToSocket(
     },
   });
   const detachPassiveHistorySync = attachWhatsAppPassiveHistorySyncCapture({
+    // SAFETY: Baileys `ev` is a typed emitter whose generic on/off signatures are not assignable to this structural passive-listener interface; only on/off for the fixed history-sync event are used and the listener validates its payload.
     events: options.sock.ev as unknown as {
       on: (event: string, listener: (payload: unknown) => void) => void;
       off?: (event: string, listener: (payload: unknown) => void) => void;

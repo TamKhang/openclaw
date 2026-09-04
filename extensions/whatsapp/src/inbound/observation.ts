@@ -31,6 +31,7 @@ function readWhatsAppMessageReceivedHookOptIn(value: unknown): boolean | undefin
   if (!value || typeof value !== "object") {
     return undefined;
   }
+  // SAFETY: value is a non-null object (guarded above); only pluginHooks.messageReceived is read via optional chaining.
   const pluginHooks = (value as WhatsAppMessageReceivedHookConfig).pluginHooks;
   if (pluginHooks?.messageReceived === undefined) {
     return undefined;
@@ -42,9 +43,7 @@ export function shouldEmitWhatsAppMessageReceivedHooks(params: {
   cfg: ReturnType<LoadConfigFn>;
   accountId?: string;
 }): boolean {
-  const channelConfig = params.cfg.channels?.whatsapp as
-    | WhatsAppMessageReceivedHookConfig
-    | undefined;
+  const channelConfig = params.cfg.channels?.whatsapp;
   const accountConfig =
     params.accountId && channelConfig?.accounts
       ? channelConfig.accounts[params.accountId]
@@ -61,6 +60,7 @@ function readWhatsAppHistorySyncCaptureOptIn(value: unknown): boolean | undefine
   if (!value || typeof value !== "object") {
     return undefined;
   }
+  // SAFETY: value is a non-null object (guarded above); only pluginHooks.historySyncCapture is read via optional chaining.
   const pluginHooks = (value as WhatsAppMessageReceivedHookConfig).pluginHooks;
   if (pluginHooks?.historySyncCapture === undefined) {
     return undefined;
@@ -72,9 +72,7 @@ export function isWhatsAppPassiveHistorySyncCaptureEnabled(params: {
   cfg: ReturnType<LoadConfigFn>;
   accountId?: string;
 }): boolean {
-  const channelConfig = params.cfg.channels?.whatsapp as
-    | WhatsAppMessageReceivedHookConfig
-    | undefined;
+  const channelConfig = params.cfg.channels?.whatsapp;
   const accountConfig =
     params.accountId && channelConfig?.accounts
       ? channelConfig.accounts[params.accountId]
@@ -203,7 +201,8 @@ export function emitBlockedWhatsAppGroupObservation(params: {
     SenderId: params.participantJid ?? params.senderE164 ?? undefined,
     SenderName: params.pushName,
     SenderE164: params.senderE164 ?? undefined,
-  } as FinalizedMsgContext;
+    CommandAuthorized: false,
+  };
 
   emitWhatsAppMessageReceivedHooks({
     ctx,

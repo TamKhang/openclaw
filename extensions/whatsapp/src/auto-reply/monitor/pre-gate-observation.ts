@@ -1,7 +1,6 @@
 // WhatsApp pre-gating observation emits the opted-in `message_received` hook
 // before group mention/activation gating. It is observation-only and never
 // starts a turn, sends an ack/reaction, or produces outbound WhatsApp traffic.
-import type { FinalizedMsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { getPrimaryIdentityId, getSenderIdentity } from "../../identity.js";
 import {
   emitWhatsAppMessageReceivedHooks,
@@ -48,7 +47,8 @@ export async function emitPreGateWhatsAppGroupObservation(params: {
     SenderId: getPrimaryIdentityId(sender) ?? undefined,
     SenderName: sender.name ?? undefined,
     SenderE164: sender.e164 ?? undefined,
-  } as FinalizedMsgContext;
+    CommandAuthorized: false,
+  };
 
   emitWhatsAppMessageReceivedHooks({
     ctx,
