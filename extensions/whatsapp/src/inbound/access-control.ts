@@ -57,6 +57,9 @@ export async function checkInboundAccessControl(params: {
   senderJid?: string | null;
   group: boolean;
   pushName?: string;
+  body?: string;
+  id?: string;
+  groupSubject?: string;
   isFromMe: boolean;
   messageTimestampMs?: number;
   connectedAtMs?: number;
@@ -110,6 +113,10 @@ export async function checkInboundAccessControl(params: {
   const access = await resolveChannelIngress();
   const { senderAccess } = access;
   if (params.group && senderAccess.decision !== "allow") {
+    const conversationGroupPolicy = policy.resolveConversationGroupPolicy(conversationId);
+    if (!conversationGroupPolicy.allowed) {
+      return blockedInboundAccess(policy);
+    }
     if (senderAccess.reasonCode === "group_policy_disabled") {
       logWhatsAppVerbose(params.verbose, "Blocked group message (groupPolicy: disabled)");
     } else if (senderAccess.reasonCode === "group_policy_empty_allowlist") {
@@ -127,11 +134,12 @@ export async function checkInboundAccessControl(params: {
       cfg: params.cfg,
       accountId: policy.account.accountId,
       selfE164: params.selfE164,
-      body: "",
+      body: params.body ?? "",
+      id: params.id,
       remoteJid: params.remoteJid,
       participantJid: params.senderJid ?? undefined,
       senderE164: params.senderE164,
-      groupSubject: undefined,
+      groupSubject: params.groupSubject,
       messageTimestampMs: params.messageTimestampMs,
       pushName: params.pushName,
     });

@@ -264,6 +264,7 @@ function callProcessMessage(
     dispatchReplyFromConfig?: Parameters<typeof processMessage>[0]["dispatchReplyFromConfig"];
     groupHistories?: Map<string, unknown[]>;
     msg?: unknown;
+    messageReceivedEmitted?: boolean;
   } = {},
 ) {
   return processMessage({
@@ -275,6 +276,7 @@ function callProcessMessage(
     groupMemberNames: new Map(),
     connectionId: "conn-1",
     verbose: false,
+    messageReceivedEmitted: overrides.messageReceivedEmitted,
     maxMediaBytes: 1024,
     dispatchReplyFromConfig: overrides.dispatchReplyFromConfig,
     replyResolver: (async () => undefined) as never,
@@ -557,6 +559,39 @@ describe("processMessage group system prompt wiring", () => {
       timestamp: undefined,
       messages: [],
     });
+  });
+
+  it("does not double-emit message_received hooks when pre-gate observation already emitted", async () => {
+    const internalReceived = vi.fn();
+    registerInternalHook("message:received", internalReceived);
+    resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
+    buildContextMock.mockImplementationOnce(() => ({
+      Body: "hi",
+      RawBody: "hi",
+      CommandBody: "hi",
+      SessionKey: baseRoute.sessionKey,
+      Provider: "whatsapp",
+      Surface: "whatsapp",
+      SuppressMessageReceivedHooks: true,
+    }));
+
+    await callProcessMessage({
+      cfg: {
+        channels: {
+          whatsapp: {
+            pluginHooks: {
+              messageReceived: true,
+            },
+          },
+        },
+      },
+      messageReceivedEmitted: true,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runMessageReceivedMock).not.toHaveBeenCalled();
+    expect(internalReceived).not.toHaveBeenCalled();
   });
 
   it("does not fire WhatsApp message_received hooks without explicit opt-in", async () => {

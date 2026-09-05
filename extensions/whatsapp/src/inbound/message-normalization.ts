@@ -6,7 +6,7 @@ import {
   type AcceptedInboundAccessControlResult,
 } from "./access-control.js";
 import { isRecentOutboundMessage } from "./dedupe.js";
-import { hasInboundUserContent } from "./extract.js";
+import { extractText, hasInboundUserContent } from "./extract.js";
 import type { WhatsAppGroupMetadataCacheOwner } from "./group-metadata-cache.js";
 import { isJidGroup } from "./runtime-api.js";
 import type { WhatsAppAttachedSocketSession } from "./socket-session.js";
@@ -95,6 +95,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     const messageTimestampSeconds = options.parseTimestampSeconds(msg.messageTimestamp);
     const messageTimestampMs =
       messageTimestampSeconds !== undefined ? messageTimestampSeconds * 1000 : undefined;
+    const body = extractText(msg.message ?? undefined) ?? "";
     const access = await checkInboundAccessControl({
       cfg: options.loadConfig?.() ?? options.cfg,
       accountId: options.accountId,
@@ -104,6 +105,9 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       senderJid: participantJid,
       group,
       pushName: msg.pushName ?? undefined,
+      body,
+      id,
+      groupSubject,
       isFromMe: Boolean(msg.key?.fromMe),
       messageTimestampMs,
       connectedAtMs: socketSession.connectedAtMs,

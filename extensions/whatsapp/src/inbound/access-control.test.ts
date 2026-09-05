@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AcceptedInboundAccessControlResult } from "./access-control.js";
 import {
   readAllowFromStoreMock,
@@ -14,7 +14,17 @@ import {
 } from "./access-control.test-harness.js";
 import { createTestWebInboundMessage } from "./test-message.test-helper.js";
 
+const emitBlockedWhatsAppGroupObservationMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./observation.js", () => ({
+  emitBlockedWhatsAppGroupObservation: (...args: unknown[]) =>
+    emitBlockedWhatsAppGroupObservationMock(...args),
+}));
+
 setupAccessControlTestHarness();
+beforeEach(() => {
+  emitBlockedWhatsAppGroupObservationMock.mockReset();
+});
 let checkInboundAccessControl: typeof import("./access-control.js").checkInboundAccessControl;
 let resolveWhatsAppCommandAuthorized: typeof import("../inbound-policy.js").resolveWhatsAppCommandAuthorized;
 type InboundAccessControlResult = Awaited<ReturnType<typeof checkInboundAccessControl>>;
@@ -301,6 +311,88 @@ describe("checkInboundAccessControl admission contract", () => {
 
     expect(result.allowed).toBe(false);
     expect("admission" in result).toBe(false);
+  });
+
+  it("emits a passive group observation with real body and metadata while keeping dispatch rejected", async () => {
+    const groupJid = "120363401234567890@g.us";
+    const cfg = {
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          groupAllowFrom: ["+15550009999"],
+        },
+      },
+    };
+    setAccessControlTestConfig(cfg);
+
+    const result = await checkInboundAccessControl({
+      cfg: getAccessControlTestConfig() as never,
+      accountId: "default",
+      from: groupJid,
+      selfE164: "+15550009999",
+      senderE164: "+15550001111",
+      senderJid: "15550001111@s.whatsapp.net",
+      group: true,
+      pushName: "Stranger",
+      body: "actual group body",
+      id: "blocked-group-1",
+      groupSubject: "Ops room",
+      isFromMe: false,
+      sock: { sendMessage: sendMessageMock },
+      remoteJid: groupJid,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect("admission" in result).toBe(false);
+    expect(emitBlockedWhatsAppGroupObservationMock).toHaveBeenCalledTimes(1);
+    expect(emitBlockedWhatsAppGroupObservationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: "actual group body",
+        id: "blocked-group-1",
+        remoteJid: groupJid,
+        participantJid: "15550001111@s.whatsapp.net",
+        senderE164: "+15550001111",
+        groupSubject: "Ops room",
+      }),
+    );
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("does not emit a passive group observation for an unconfigured group", async () => {
+    const groupJid = "120363401234567890@g.us";
+    const cfg = {
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          groupAllowFrom: ["+15550009999"],
+          groups: {
+            "120363409876543210@g.us": {},
+          },
+        },
+      },
+    };
+    setAccessControlTestConfig(cfg);
+
+    const result = await checkInboundAccessControl({
+      cfg: getAccessControlTestConfig() as never,
+      accountId: "default",
+      from: groupJid,
+      selfE164: "+15550009999",
+      senderE164: "+15550001111",
+      senderJid: "15550001111@s.whatsapp.net",
+      group: true,
+      pushName: "Stranger",
+      body: "unconfigured group body",
+      id: "blocked-unconfigured-group-1",
+      groupSubject: "Unregistered room",
+      isFromMe: false,
+      sock: { sendMessage: sendMessageMock },
+      remoteJid: groupJid,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect("admission" in result).toBe(false);
+    expect(emitBlockedWhatsAppGroupObservationMock).not.toHaveBeenCalled();
   });
 });
 

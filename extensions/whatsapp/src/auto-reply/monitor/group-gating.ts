@@ -189,7 +189,12 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     const explicitOwnerGroupReply = authorizeExplicitOwnerGroupReply({
       cfg: params.cfg,
       msg: params.msg,
-      baseMentionConfig,
+      baseMentionConfig: {
+        ...baseMentionConfig,
+        // Explicit owner delegation is group-scoped. Ordinary mention gating
+        // below still uses the DM-derived baseMentionConfig.
+        allowFrom: inboundPolicy.groupAllowFrom,
+      },
       authDir: params.authDir,
       groupHistoryKey: params.groupHistoryKey,
       groupMemberNames: params.groupMemberNames,

@@ -537,6 +537,73 @@ describe("applyGroupGating", () => {
     expect(result.shouldProcess).toBe(true);
   });
 
+  it("authorizes the exact owner trigger from groupAllowFrom without DM allowFrom", async () => {
+    const cfg = makeConfig({
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          allowFrom: ["+999"],
+          groupAllowFrom: ["+111"],
+          groups: { "*": { requireMention: true } },
+        },
+      },
+    });
+
+    const { result } = await runGroupGating({
+      cfg,
+      msg: createGroupMessage({
+        id: "g-owner-trigger-group-allow",
+        admission: { accountId: "default" },
+        body: "Bruno, come in",
+        senderE164: "+111",
+        senderName: "Owner",
+        selfE164: "+15551234567",
+        selfJid: "15551234567@s.whatsapp.net",
+        replyToId: "target-1",
+        replyToBody: "Can you help me with this?",
+        replyToSender: "Alice",
+        replyToSenderJid: "222@s.whatsapp.net",
+        replyToSenderE164: "+222",
+      }),
+    });
+
+    expect(result.shouldProcess).toBe(true);
+  });
+
+  it("denies the exact owner trigger when the sender is not in groupAllowFrom", async () => {
+    const cfg = makeConfig({
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          allowFrom: ["+999"],
+          groupAllowFrom: ["+111"],
+          groups: { "*": { requireMention: true } },
+        },
+      },
+    });
+
+    const { result, groupHistories } = await runGroupGating({
+      cfg,
+      msg: createGroupMessage({
+        id: "g-owner-trigger-group-deny",
+        admission: { accountId: "default" },
+        body: "Bruno, come in",
+        senderE164: "+222",
+        senderName: "NotOwner",
+        selfE164: "+15551234567",
+        selfJid: "15551234567@s.whatsapp.net",
+        replyToId: "target-2",
+        replyToBody: "Can you help me with this?",
+        replyToSender: "Alice",
+        replyToSenderJid: "333@s.whatsapp.net",
+        replyToSenderE164: "+333",
+      }),
+    });
+
+    expect(result.shouldProcess).toBe(false);
+    expect(groupHistories.get("whatsapp:default:group:123@g.us")?.length).toBe(1);
+  });
+
   it("uses account-scoped allowFrom when bypassing mention gating for owner commands", async () => {
     const cfg = makeConfig({
       channels: {
