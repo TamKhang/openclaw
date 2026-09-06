@@ -143,6 +143,7 @@ export async function prepareEmbeddedAttemptBundleTools(params: {
     ? await materializeBundleMcpToolsForRun({
         runtime: bundleMcpSessionRuntime,
         agentId: params.sessionAgentId,
+        trustedBrunoRoutingCapability: runtimeCapabilityProfile.trustedBrunoRoutingCapability,
         reservedToolNames: [
           ...tools.map((tool) => tool.name),
           ...(clientTools?.map((tool) => tool.function.name) ?? []),

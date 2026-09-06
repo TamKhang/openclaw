@@ -290,6 +290,11 @@ function buildEmbeddedContextFromTemplate(params: {
       config,
       hasRepliedRef: params.hasRepliedRef,
     }),
+    ...(sessionCtx.OutboundGroupReplyAuthorization
+      ? {
+          outboundGroupReplyAuthorization: sessionCtx.OutboundGroupReplyAuthorization,
+        }
+      : {}),
     currentInboundAudio: hasInboundAudio(sessionCtx),
   };
 }

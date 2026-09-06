@@ -22,6 +22,7 @@ import type { CronScheduledToolCallerOrigin } from "../../../cron/scheduled-tool
 import type { ImageContent } from "../../../llm/types.js";
 import type { MediaFact } from "../../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../../media/prompt-image-order.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../../../plugins/hook-message.types.js";
 import type { PluginHookChannelContext } from "../../../plugins/hook-types.js";
 import type { RuntimePluginToolGrant } from "../../../plugins/runtime/tool-grant.js";
 import type { CommandQueueEnqueueFn } from "../../../process/command-queue.types.js";
@@ -148,6 +149,8 @@ export type RunEmbeddedAgentParams = {
   memberRoleIds?: string[];
   /** Opaque host-issued capability for current-turn channel message actions. */
   messageActionTurnCapability?: string;
+  /** Trusted channel-owned group-reply delegation fact; never model-supplied. */
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
   /** Parent session key for subagent policy inheritance. */
   spawnedBy?: string | null;
   /** Whether workspaceDir points at the canonical agent workspace for bootstrap purposes. */

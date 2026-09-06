@@ -119,6 +119,20 @@ function notConnectedToolResult(serverName: string, toolName: string) {
   };
 }
 
+function resolveHarnessCapabilityProfile(
+  params: MaterializeRequesterScopedMcpToolsForHarnessRunParams,
+): ResolvedConversationCapabilityProfile | undefined {
+  return (
+    params.conversationCapabilityProfile ??
+    (params.policyContext
+      ? resolveConversationCapabilityProfile({
+          ...params.policyContext,
+          runtimeToolAllowlist: params.toolsAllow,
+        })
+      : undefined)
+  );
+}
+
 function applyHarnessToolPolicy(
   tools: AnyAgentTool[],
   params: MaterializeRequesterScopedMcpToolsForHarnessRunParams,
@@ -129,14 +143,7 @@ function applyHarnessToolPolicy(
   const allowed = applyEmbeddedAttemptToolsAllow(tools, params.toolsAllow, {
     toolMeta: (tool) => getPluginToolMeta(tool),
   });
-  const profile =
-    params.conversationCapabilityProfile ??
-    (params.policyContext
-      ? resolveConversationCapabilityProfile({
-          ...params.policyContext,
-          runtimeToolAllowlist: params.toolsAllow,
-        })
-      : undefined);
+  const profile = resolveHarnessCapabilityProfile(params);
   if (!profile) {
     return allowed;
   }
@@ -200,10 +207,12 @@ export async function materializeStaticMcpToolsForScheduledHarnessRunCore(
     : undefined;
   let liveRuntime: Awaited<ReturnType<typeof materializeBundleMcpToolsForRun>>;
   try {
+    const capabilityProfile = resolveHarnessCapabilityProfile(params);
     liveRuntime = await materializeBundleMcpToolsForRun({
       runtime,
       agentId: params.agentId,
       reservedToolNames: params.reservedToolNames,
+      trustedBrunoRoutingCapability: capabilityProfile?.trustedBrunoRoutingCapability,
       ...(retireSnapshotRuntime ? { disposeRuntime: retireSnapshotRuntime } : {}),
     });
   } catch (error) {
@@ -283,10 +292,12 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
   let liveCatalog: McpToolCatalog | undefined;
   try {
     if (scopedRuntime) {
+      const capabilityProfile = resolveHarnessCapabilityProfile(params);
       liveRuntime = await materializeBundleMcpToolsForRun({
         runtime: scopedRuntime,
         agentId: params.agentId,
         reservedToolNames: params.reservedToolNames,
+        trustedBrunoRoutingCapability: capabilityProfile?.trustedBrunoRoutingCapability,
       });
       liveCatalog = scopedRuntime.peekCatalog() ?? (await scopedRuntime.getCatalog());
       if (liveCatalog.tools.length > 0 && scopedRuntimeHandle) {

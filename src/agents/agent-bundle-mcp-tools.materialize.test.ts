@@ -3,7 +3,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { expectDefined } from "@openclaw/normalization-core";
 import { validateToolArguments } from "openclaw/plugin-sdk/llm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import {
   buildBundleMcpToolsFromCatalog,
@@ -15,6 +15,7 @@ import type {
   McpToolCatalogDiagnostic,
   SessionMcpRuntime,
 } from "./agent-bundle-mcp-types.js";
+import { BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME } from "./bruno-routing-capability.js";
 import { applyEmbeddedAttemptToolsAllow } from "./embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { getMcpAppViewLease } from "./mcp-ui-resource.js";
 import { testing as mcpUiResourceTesting } from "./mcp-ui-resource.test-support.js";
@@ -270,6 +271,118 @@ describe("createBundleMcpToolRuntime", () => {
       mcpServer: "bundleProbe",
       mcpTool: "bundle_probe",
     });
+  });
+
+  it("attaches host-derived Bruno routing capability to MCP tool calls", async () => {
+    const callTool = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "FROM-BRUNO" }],
+      isError: false,
+    }));
+    const runtime = {
+      ...makeToolRuntime({
+        serverName: "bruno-brain",
+        tools: [
+          {
+            serverName: "bruno-brain",
+            safeServerName: "bruno-brain",
+            toolName: BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME,
+            description: "Bruno Brain process event",
+            inputSchema: { type: "object", properties: {} },
+            fallbackDescription: "Bruno Brain process event",
+          },
+        ],
+      }),
+      callTool,
+    } satisfies SessionMcpRuntime;
+    const materialized = await materializeBundleMcpToolsForRun({
+      runtime,
+      trustedBrunoRoutingCapability: "whatsapp.dm.standard",
+    });
+
+    await expectDefined(materialized.tools[0], "materialized.tools[0] test invariant").execute(
+      "call-1",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(callTool).toHaveBeenCalledWith(
+      "bruno-brain",
+      BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME,
+      {},
+      { trustedBrunoRoutingCapability: "whatsapp.dm.standard" },
+    );
+  });
+
+  it("does not let model tool input override the host-derived capability", async () => {
+    const callTool = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "FROM-BRUNO" }],
+      isError: false,
+    }));
+    const runtime = {
+      ...makeToolRuntime({
+        serverName: "bruno-brain",
+        tools: [
+          {
+            serverName: "bruno-brain",
+            safeServerName: "bruno-brain",
+            toolName: BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME,
+            description: "Bruno Brain process event",
+            inputSchema: { type: "object", properties: {} },
+            fallbackDescription: "Bruno Brain process event",
+          },
+        ],
+      }),
+      callTool,
+    } satisfies SessionMcpRuntime;
+    const materialized = await materializeBundleMcpToolsForRun({
+      runtime,
+      trustedBrunoRoutingCapability: "whatsapp.dm.standard",
+    });
+
+    await expectDefined(materialized.tools[0], "materialized.tools[0] test invariant").execute(
+      "call-1",
+      {
+        capability_id: "whatsapp.group.reply_once",
+        reasoning: { request: { capability_id: "whatsapp.dm.premium_requested" } },
+      },
+      undefined,
+      undefined,
+    );
+
+    expect(callTool).toHaveBeenCalledWith(
+      "bruno-brain",
+      BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME,
+      {
+        capability_id: "whatsapp.group.reply_once",
+        reasoning: { request: { capability_id: "whatsapp.dm.premium_requested" } },
+      },
+      { trustedBrunoRoutingCapability: "whatsapp.dm.standard" },
+    );
+  });
+
+  it("does not attach trusted Bruno capability to unrelated MCP tools", async () => {
+    const callTool = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "FROM-OTHER" }],
+      isError: false,
+    }));
+    const runtime = {
+      ...makeToolRuntime(),
+      callTool,
+    } satisfies SessionMcpRuntime;
+    const materialized = await materializeBundleMcpToolsForRun({
+      runtime,
+      trustedBrunoRoutingCapability: "whatsapp.dm.standard",
+    });
+
+    await expectDefined(materialized.tools[0], "materialized.tools[0] test invariant").execute(
+      "call-1",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(callTool).toHaveBeenCalledWith("bundleProbe", "bundle_probe", {});
   });
 
   it("marks MCP tools parallel only when the server advertises parallel support", async () => {

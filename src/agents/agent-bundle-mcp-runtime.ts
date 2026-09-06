@@ -37,7 +37,9 @@ import type {
   SessionMcpRequesterScope,
   SessionMcpRuntime,
   SessionMcpRuntimeManager,
+  SessionMcpCallToolOptions,
 } from "./agent-bundle-mcp-types.js";
+import { BRUNO_ROUTING_CAPABILITY_META_KEY } from "./bruno-routing-capability.js";
 import {
   connectMcpClient,
   disposeMcpClient,
@@ -1020,12 +1022,25 @@ export function createSessionMcpRuntime(params: {
     markUsed() {
       lastUsedAt = Date.now();
     },
-    async callTool(serverName, toolName, input) {
+    async callTool(serverName, toolName, input, options?: SessionMcpCallToolOptions) {
       const session = await getActiveSession(serverName);
       const validateResult = session.toolMetadata?.validatorForCall(toolName);
+      const trustedBrunoRoutingCapability = options?.trustedBrunoRoutingCapability;
       const result = (await runGuardedMcpRequest(serverName, session, (signal) =>
         session.client.callTool(
-          { name: toolName, arguments: isRecord(input) ? input : {} },
+          {
+            name: toolName,
+            arguments: isRecord(input) ? input : {},
+            ...(trustedBrunoRoutingCapability
+              ? {
+                  _meta: {
+                    [BRUNO_ROUTING_CAPABILITY_META_KEY]: {
+                      capability_id: trustedBrunoRoutingCapability,
+                    },
+                  },
+                }
+              : {}),
+          },
           undefined,
           { timeout: session.requestTimeoutMs, signal },
         ),

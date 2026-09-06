@@ -81,6 +81,29 @@ describe("resolveConversationCapabilityProfile", () => {
     ).toEqual(["read", "write", "exec"]);
   });
 
+  it("derives the trusted Bruno routing capability from WhatsApp conversation context", () => {
+    const direct = resolveConversationCapabilityProfile({
+      messageProvider: "whatsapp",
+      chatType: "direct",
+    });
+    expect(direct.trustedBrunoRoutingCapability).toBe("whatsapp.dm.standard");
+
+    const replyOnce = resolveConversationCapabilityProfile({
+      messageProvider: "whatsapp",
+      chatType: "group",
+      outboundGroupReplyAuthorization: {
+        capability: "whatsapp.group.reply_once",
+        token: "token-1",
+        groupId: "group-1",
+        chatId: "group-1",
+        ownerTriggerMessageId: "owner-trigger-1",
+        quotedMessageId: "quoted-1",
+        targetParticipantId: "participant-1",
+      },
+    });
+    expect(replyOnce.trustedBrunoRoutingCapability).toBe("whatsapp.group.reply_once");
+  });
+
   it("prepares a direct conversation profile with sender tool restrictions", () => {
     const cfg: OpenClawConfig = {
       tools: {

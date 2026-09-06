@@ -25,6 +25,10 @@ import type {
   SessionMcpRuntime,
 } from "./agent-bundle-mcp-types.js";
 import {
+  BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME,
+  type TrustedBrunoRoutingCapability,
+} from "./bruno-routing-capability.js";
+import {
   projectMcpCallToolResult,
   setMcpCodeModeGuestResult,
   setMcpCodeModeGuestResultFromAgentResult,
@@ -448,6 +452,7 @@ export async function materializeBundleMcpToolsForRun(params: {
   runtime: SessionMcpRuntime;
   agentId?: string;
   reservedToolNames?: Iterable<string>;
+  trustedBrunoRoutingCapability?: TrustedBrunoRoutingCapability;
   disposeRuntime?: () => Promise<void>;
 }): Promise<BundleMcpToolRuntime> {
   const runtime = params.runtime;
@@ -479,7 +484,15 @@ export async function materializeBundleMcpToolsForRun(params: {
         }
         runtime.markUsed();
         const { serverName, toolName } = tool;
-        const result = await runtime.callTool(serverName, toolName, input);
+        const trustedBrunoRoutingCapability =
+          toolName === BRUNO_BRAIN_PROCESS_EVENT_TOOL_NAME
+            ? params.trustedBrunoRoutingCapability
+            : undefined;
+        const result = trustedBrunoRoutingCapability
+          ? await runtime.callTool(serverName, toolName, input, {
+              trustedBrunoRoutingCapability,
+            })
+          : await runtime.callTool(serverName, toolName, input);
         const agentResult = toAgentToolResult({
           serverName,
           toolName,

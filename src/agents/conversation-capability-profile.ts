@@ -8,6 +8,7 @@ import type { ChatType } from "../channels/chat-type.js";
 import { normalizeChatType } from "../channels/chat-type.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { GroupToolPolicyConfig } from "../config/types.tools.js";
+import type { PluginHookOutboundGroupReplyAuthorization } from "../plugins/hook-message.types.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { RuntimePluginToolGrant } from "../plugins/runtime/tool-grant.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
@@ -19,6 +20,10 @@ import {
   resolveTrustedGroupId,
   sessionKeyNamesGroupConversation,
 } from "./agent-tools.policy.js";
+import {
+  resolveTrustedBrunoRoutingCapability,
+  type TrustedBrunoRoutingCapability,
+} from "./bruno-routing-capability.js";
 import {
   resolveRequesterToolPolicies,
   type RequesterToolPolicySource,
@@ -110,10 +115,14 @@ export type ConversationCapabilityProfileParams = {
   trustedInternalHandoff?: TrustedSubagentCompletionHandoff;
   /** Trusted server-stamped authority for an explicitly capped scheduled run. */
   scheduledToolPolicy?: ScheduledToolPolicyContext;
+  /** Trusted channel-owned group-reply delegation fact; never model-supplied. */
+  outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization | null;
 };
 
 export type ResolvedConversationCapabilityProfile = {
   agentId?: string;
+  /** Host-derived Bruno Brain routing capability for this conversation. */
+  trustedBrunoRoutingCapability?: TrustedBrunoRoutingCapability;
   serviceIdentity: {
     agentId?: string;
     agentDir?: string;
@@ -214,6 +223,12 @@ export function resolveConversationCapabilityProfile(
   params: ConversationCapabilityProfileParams,
 ): ResolvedConversationCapabilityProfile {
   const messageProvider = params.messageProvider;
+  const trustedBrunoRoutingCapability = resolveTrustedBrunoRoutingCapability({
+    messageProvider,
+    messageChannel: params.messageChannel,
+    chatType: params.chatType,
+    outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
+  });
   const effective = resolveEffectiveToolPolicy({
     config: params.config,
     sessionKey: params.sessionKey,
@@ -314,6 +329,7 @@ export function resolveConversationCapabilityProfile(
 
   return {
     agentId: effective.agentId,
+    ...(trustedBrunoRoutingCapability ? { trustedBrunoRoutingCapability } : {}),
     serviceIdentity: {
       agentId: effective.agentId,
       agentDir: params.agentDir,
