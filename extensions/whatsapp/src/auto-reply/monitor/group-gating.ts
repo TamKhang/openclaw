@@ -184,6 +184,9 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     ...params.baseMentionConfig,
     allowFrom: inboundPolicy.configuredAllowFrom,
   };
+  const explicitOwnerGroupReplyAllowFrom = [
+    ...new Set([...inboundPolicy.configuredAllowFrom, ...inboundPolicy.groupAllowFrom]),
+  ];
   const inboundBody = params.msg.payload.commandBody ?? params.msg.payload.body;
   if (inboundBody === EXPLICIT_OWNER_GROUP_REPLY_TRIGGER) {
     const explicitOwnerGroupReply = authorizeExplicitOwnerGroupReply({
@@ -191,9 +194,10 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
       msg: params.msg,
       baseMentionConfig: {
         ...baseMentionConfig,
-        // Explicit owner delegation is group-scoped. Ordinary mention gating
-        // below still uses the DM-derived baseMentionConfig.
-        allowFrom: inboundPolicy.groupAllowFrom,
+        // Owner delegation can be scoped to either the DM owner list or a
+        // dedicated group owner list. `resolveOwnerList` drops "*", so
+        // wildcard group sender access must not erase the concrete owner list.
+        allowFrom: explicitOwnerGroupReplyAllowFrom,
       },
       authDir: params.authDir,
       groupHistoryKey: params.groupHistoryKey,

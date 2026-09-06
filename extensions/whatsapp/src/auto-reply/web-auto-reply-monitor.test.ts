@@ -8,6 +8,10 @@ import { createTestWebInboundMessage } from "../inbound/test-message.test-helper
 import type { AdmittedWebInboundMessage } from "../inbound/types.js";
 import { buildMentionConfig } from "./mentions.js";
 import { applyGroupGating, type GroupHistoryEntry } from "./monitor/group-gating.js";
+import {
+  consumeGroupReplyOnceAuthorization,
+  resetGroupReplyOnceForTests,
+} from "./monitor/group-reply-once.js";
 import { formatWhatsAppInboundListeningLog } from "./monitor/listener-log.js";
 import { buildInboundLine } from "./monitor/message-line.js";
 
@@ -601,6 +605,126 @@ describe("applyGroupGating", () => {
     });
 
     expect(result.shouldProcess).toBe(false);
+    expect(groupHistories.get("whatsapp:default:group:123@g.us")?.length).toBe(1);
+  });
+
+  it("processes an owner quote trigger exactly once when group sender access is wildcard", async () => {
+    resetGroupReplyOnceForTests();
+    const cfg = makeConfig({
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          allowFrom: ["+111"],
+          groupAllowFrom: ["*"],
+          groups: { "123@g.us": { requireMention: true } },
+        },
+      },
+    });
+
+    const { result: ordinaryResult, groupHistories: ordinaryHistory } = await runGroupGating({
+      cfg,
+      msg: createGroupMessage({
+        id: "g-prod-history-1",
+        body: "How is the weather in Sydney today?",
+        senderE164: "+222",
+        senderName: "Member",
+        selfE164: "+15551234567",
+        selfJid: "15551234567@s.whatsapp.net",
+      }),
+    });
+    expect(ordinaryResult.shouldProcess).toBe(false);
+    expect(ordinaryHistory.get("whatsapp:default:group:123@g.us")?.length).toBe(1);
+
+    const triggerMsg = createGroupMessage({
+      id: "g-prod-owner-trigger-1",
+      body: "Bruno, come in",
+      senderE164: "+111",
+      senderName: "Owner",
+      selfE164: "+15551234567",
+      selfJid: "15551234567@s.whatsapp.net",
+      replyToId: "g-prod-history-1",
+      replyToBody: "How is the weather in Sydney today?",
+      replyToSender: "Member",
+      replyToSenderJid: "222@s.whatsapp.net",
+      replyToSenderE164: "+222",
+    });
+    const { result: triggerResult } = await runGroupGating({
+      cfg,
+      msg: triggerMsg,
+    });
+    expect(triggerResult.shouldProcess).toBe(true);
+    expect(triggerMsg.groupReplyOnce).toBeDefined();
+
+    expect(consumeGroupReplyOnceAuthorization({ msg: triggerMsg }).status).toBe("authorized");
+    expect(consumeGroupReplyOnceAuthorization({ msg: triggerMsg })).toMatchObject({
+      status: "denied",
+      reason: "already_consumed",
+    });
+  });
+
+  it("denies the exact owner trigger when group sender access is wildcard", async () => {
+    resetGroupReplyOnceForTests();
+    const cfg = makeConfig({
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          allowFrom: ["+111"],
+          groupAllowFrom: ["*"],
+          groups: { "123@g.us": { requireMention: true } },
+        },
+      },
+    });
+    const msg = createGroupMessage({
+      id: "g-prod-non-owner-trigger-1",
+      body: "Bruno, come in",
+      senderE164: "+222",
+      senderName: "NotOwner",
+      selfE164: "+15551234567",
+      selfJid: "15551234567@s.whatsapp.net",
+      replyToId: "target-1",
+      replyToBody: "Can you help me with this?",
+      replyToSender: "Alice",
+      replyToSenderJid: "333@s.whatsapp.net",
+      replyToSenderE164: "+333",
+    });
+
+    const { result, groupHistories } = await runGroupGating({ cfg, msg });
+
+    expect(result.shouldProcess).toBe(false);
+    expect(msg.groupReplyOnce).toBeUndefined();
+    expect(groupHistories.get("whatsapp:default:group:123@g.us")?.length).toBe(1);
+  });
+
+  it("keeps near-match owner trigger text silent as ordinary group context", async () => {
+    resetGroupReplyOnceForTests();
+    const cfg = makeConfig({
+      channels: {
+        whatsapp: {
+          groupPolicy: "allowlist",
+          allowFrom: ["+111"],
+          groupAllowFrom: ["*"],
+          groups: { "123@g.us": { requireMention: true } },
+        },
+      },
+    });
+    const msg = createGroupMessage({
+      id: "g-prod-near-trigger-1",
+      body: "Bruno come in",
+      senderE164: "+111",
+      senderName: "Owner",
+      selfE164: "+15551234567",
+      selfJid: "15551234567@s.whatsapp.net",
+      replyToId: "target-1",
+      replyToBody: "Can you help me with this?",
+      replyToSender: "Alice",
+      replyToSenderJid: "333@s.whatsapp.net",
+      replyToSenderE164: "+333",
+    });
+
+    const { result, groupHistories } = await runGroupGating({ cfg, msg });
+
+    expect(result.shouldProcess).toBe(false);
+    expect(msg.groupReplyOnce).toBeUndefined();
     expect(groupHistories.get("whatsapp:default:group:123@g.us")?.length).toBe(1);
   });
 
