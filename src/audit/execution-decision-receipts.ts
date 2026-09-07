@@ -1,9 +1,11 @@
+import { FAILOVER_REASONS } from "../../packages/gateway-protocol/src/failover-reasons.js";
 /** Bounded receipt projection across admission, owner-native, and generic decision facts. */
 import type {
   AuditRunInspectResult,
   DecisionReceiptDisplayV1,
   DecisionReceiptV1,
   ExecutionIdentityContextV1,
+  ModelRoutingReceiptV1,
 } from "../../packages/gateway-protocol/src/index.js";
 import {
   pageOperatorApprovalReceiptsForRun,
@@ -40,6 +42,11 @@ type ProvenancedDecisionReceipt = {
 
 const MAX_AGGREGATE_MISSING_EVIDENCE = 16;
 const MISSING_EVIDENCE_TRUNCATED = "decision.missing_evidence_truncated";
+const MODEL_ROUTING_FALLBACK_SENTINEL = "model_route_selected_after_fallback";
+const MODEL_ROUTING_FALLBACK_REASON_CODES = new Set<string>([
+  MODEL_ROUTING_FALLBACK_SENTINEL,
+  ...FAILOVER_REASONS,
+]);
 type DecisionStage = "approval" | "message" | "generic" | OwnerLifecycleStage;
 type DecisionCursor =
   | {
@@ -213,6 +220,26 @@ function projectDecisionDisplay({
     provenance,
     missingEvidence: receipt.missingEvidence,
     remediation: receipt.remediation,
+  };
+}
+
+function isAuthoritativeModelRoutingReceipt(receipt: DecisionReceiptV1): boolean {
+  return (
+    receipt.action.family === "model-routing" &&
+    receipt.source.owner === "model-routing" &&
+    receipt.source.decisionBoundary === "agent-runtime.post-admission"
+  );
+}
+
+function projectModelRoutingReceipt(receipt: DecisionReceiptV1): ModelRoutingReceiptV1 {
+  const fallbackUsed = MODEL_ROUTING_FALLBACK_REASON_CODES.has(receipt.decision.reasonCode);
+  return {
+    schemaVersion: 1,
+    routingDecisionId: receipt.receiptId,
+    occurredAt: receipt.occurredAt,
+    outcome: receipt.decision.outcome,
+    reasonCode: receipt.decision.reasonCode,
+    ...(fallbackUsed ? { fallbackUsed: true } : {}),
   };
 }
 
@@ -486,6 +513,9 @@ export function presentExecutionDecisionReceipts(params: {
     identity: { state: "present", context: params.context },
     decisions: decisions.map(({ receipt }) => receipt),
     decisionDisplays: decisions.map(projectDecisionDisplay),
+    modelRoutingReceipts: decisions
+      .filter(({ receipt }) => isAuthoritativeModelRoutingReceipt(receipt))
+      .map(({ receipt }) => projectModelRoutingReceipt(receipt)),
     coverage: { state: coverageState, missingEvidence: boundedEvidence.missingEvidence },
     ...(nextDecisionCursor ? { nextDecisionCursor } : {}),
   };

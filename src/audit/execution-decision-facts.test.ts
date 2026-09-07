@@ -128,6 +128,36 @@ function receipt(id: string, occurredAt = 100): DecisionReceiptV1 {
   };
 }
 
+function modelRoutingReceipt(id: string, reasonCode: string, occurredAt = 100): DecisionReceiptV1 {
+  return {
+    schemaVersion: 1,
+    receiptId: id,
+    contextId: "context-1",
+    executionId: "execution-1",
+    runId: "run-1",
+    occurredAt,
+    action: {
+      family: "model-routing",
+      operation: "automatic-selection",
+      summary: `Requested requested-provider/requested-model; selected selected-provider/selected-model.`,
+    },
+    decision: { outcome: "allowed", reasonCode },
+    enforcement: {
+      coverageState: "attribution-only",
+      policyRefs: [],
+      grantRefs: [],
+      contextFieldsUsed: ["contextId", "executionId", "runId"],
+    },
+    source: {
+      owner: "model-routing",
+      recordRef: id,
+      decisionBoundary: "agent-runtime.post-admission",
+    },
+    missingEvidence: [],
+    remediation: [],
+  };
+}
+
 function tokenForContext(context: ExecutionIdentityContextV1) {
   return createExecutionIdentityAdmissionToken(context.runId, {
     contextId: context.contextId,
@@ -1034,5 +1064,127 @@ describe("execution decision facts", () => {
     expect(result.decisionDisplays).toEqual([
       expect.objectContaining({ selectorId: "decision-fact:1" }),
     ]);
+  });
+
+  it("projects only authoritative model routing receipts without raw decision fields", () => {
+    const database = databaseOptions();
+    const context = seedExecutionContext(database);
+    recordExecutionDecisionFact(receipt("tool-policy"), { ...database, now: 100 });
+    recordExecutionDecisionFact(
+      modelRoutingReceipt("model-routing:selected", "model_route_selected"),
+      { ...database, now: 100 },
+    );
+
+    const result = presentExecutionDecisionReceipts({
+      context,
+      decisionLimit: 10,
+      options: { ...database, now: 100 },
+    });
+
+    expect(result.decisions.some((item) => item.action.family === "tool")).toBe(true);
+    expect(result.modelRoutingReceipts).toEqual([
+      {
+        schemaVersion: 1,
+        routingDecisionId: "model-routing:selected",
+        occurredAt: 100,
+        outcome: "allowed",
+        reasonCode: "model_route_selected",
+      },
+    ]);
+    const json = JSON.stringify(result.modelRoutingReceipts);
+    expect(json).not.toContain("summary");
+    expect(json).not.toContain("contextId");
+    expect(json).not.toContain("runId");
+    expect(json).not.toContain("requested-provider");
+    expect(json).not.toContain("selected-provider");
+  });
+
+  it("bounds multiple routing receipts and marks fallback only from authoritative reason codes", () => {
+    const database = databaseOptions();
+    const context = seedExecutionContext(database);
+    recordExecutionDecisionFact(modelRoutingReceipt("model-routing:fallback", "rate_limit", 101), {
+      ...database,
+      now: 100,
+    });
+    recordExecutionDecisionFact(
+      modelRoutingReceipt("model-routing:normal", "model_route_selected", 102),
+      { ...database, now: 100 },
+    );
+
+    const result = presentExecutionDecisionReceipts({
+      context,
+      decisionLimit: 10,
+      options: { ...database, now: 100 },
+    });
+
+    expect(result.modelRoutingReceipts).toEqual([
+      {
+        schemaVersion: 1,
+        routingDecisionId: "model-routing:fallback",
+        occurredAt: 101,
+        outcome: "allowed",
+        reasonCode: "rate_limit",
+        fallbackUsed: true,
+      },
+      {
+        schemaVersion: 1,
+        routingDecisionId: "model-routing:normal",
+        occurredAt: 102,
+        outcome: "allowed",
+        reasonCode: "model_route_selected",
+      },
+    ]);
+  });
+
+  it("excludes non-authoritative and corrupt model-routing rows from the bounded projection", () => {
+    const database = databaseOptions();
+    const context = seedExecutionContext(database);
+    recordExecutionDecisionFact(
+      {
+        ...modelRoutingReceipt("model-routing:not-owner", "model_route_selected"),
+        source: {
+          owner: "other-owner",
+          recordRef: "model-routing:not-owner",
+          decisionBoundary: "agent-runtime.post-admission",
+        },
+      },
+      { ...database, now: 100 },
+    );
+    recordExecutionDecisionFact(
+      modelRoutingReceipt("model-routing:corrupt", "model_route_selected"),
+      { ...database, now: 100 },
+    );
+    openOpenClawStateDatabase(database)
+      .db.prepare("UPDATE execution_decision_facts SET receipt_json = ? WHERE receipt_id = ?")
+      .run("{", "model-routing:corrupt");
+
+    const result = presentExecutionDecisionReceipts({
+      context,
+      decisionCursor: "g:0:0",
+      decisionLimit: 10,
+      options: { ...database, now: 100 },
+    });
+
+    expect(result.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: expect.objectContaining({ family: "model-routing" }) }),
+      ]),
+    );
+    expect(result.modelRoutingReceipts).toEqual([]);
+  });
+
+  it("keeps model routing receipts absent for non-routing audit runs", () => {
+    const database = databaseOptions();
+    const context = seedExecutionContext(database);
+    recordExecutionDecisionFact(receipt("tool-policy"), { ...database, now: 100 });
+
+    const result = presentExecutionDecisionReceipts({
+      context,
+      decisionLimit: 10,
+      options: { ...database, now: 100 },
+    });
+
+    expect(result.modelRoutingReceipts).toEqual([]);
+    expect(result.decisions.some((item) => item.action.family === "tool")).toBe(true);
   });
 });

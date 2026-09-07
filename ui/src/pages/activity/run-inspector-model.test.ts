@@ -30,6 +30,7 @@ function unavailable(
             remediation,
           },
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state: state === "ambiguous" ? "unknown" : state, missingEvidence: [] },
   };
 }
@@ -97,6 +98,7 @@ describe("receipt paging model", () => {
       },
     },
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state: "attribution-only" as const, missingEvidence: [] },
   } satisfies RunInspectorResult;
 

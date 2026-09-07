@@ -100,6 +100,7 @@ describe("ActivityPage gateway lifecycle", () => {
         remediation: [],
       },
       decisionDisplays: [],
+      modelRoutingReceipts: [],
       coverage: { state: "unknown", missingEvidence: ["run.record"] },
     } satisfies AuditRunInspectResult;
     const client = { request: vi.fn(async () => result) } as unknown as GatewayBrowserClient;

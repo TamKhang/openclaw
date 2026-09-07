@@ -83,6 +83,7 @@ export function presentResult(
         ],
       },
     ],
+    modelRoutingReceipts: [],
     coverage: { state: "unattributed", missingEvidence: ["invoker.principal"] },
     nextDecisionCursor: "1",
   };

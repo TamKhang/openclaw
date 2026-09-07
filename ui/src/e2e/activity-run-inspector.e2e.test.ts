@@ -47,6 +47,7 @@ function unavailableResult(params: {
       remediation: params.remediation ?? [],
     },
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state: params.state, missingEvidence: ["identity.context"] },
   };
 }
@@ -74,6 +75,7 @@ function ambiguousResult(
       ],
     },
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state: "unknown", missingEvidence: ["execution.selection"] },
     ...(nextExecutionCursor ? { nextExecutionCursor } : {}),
   };

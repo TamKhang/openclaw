@@ -6,6 +6,7 @@ import {
   AuditRunInspectResultSchema,
   DecisionReceiptDisplayV1Schema,
   DecisionReceiptV1Schema,
+  ModelRoutingReceiptV1Schema,
   type ExecutionIdentityContextV1,
 } from "./audit-run.js";
 
@@ -154,6 +155,7 @@ describe("audit run inspection protocol", () => {
           remediation: [{ code: "select_execution_id", text: "Select one exact execution." }],
         },
         decisionDisplays: [],
+        modelRoutingReceipts: [],
         coverage: { state: "unknown", missingEvidence: ["execution.selection"] },
       }),
     ).toBe(true);
@@ -171,11 +173,13 @@ describe("audit run inspection protocol", () => {
         remediation: [],
       },
       decisionDisplays: [],
+      modelRoutingReceipts: [],
       coverage: { state: "unknown", missingEvidence: ["run.record"] },
     };
 
     expect(validate.Check(result)).toBe(true);
     expect(validate.Check({ ...result, decisionDisplays: undefined })).toBe(false);
+    expect(validate.Check({ ...result, modelRoutingReceipts: undefined })).toBe(false);
     expect(validate.Check({ ...result, decisions: [] })).toBe(false);
   });
 
@@ -210,9 +214,28 @@ describe("audit run inspection protocol", () => {
             remediation: [{ code: "retry", text: "Retry after checking the run id." }],
           },
           decisionDisplays: [],
+          modelRoutingReceipts: [],
           coverage: { state, missingEvidence: ["identity.context"] },
         }),
       ).toBe(true);
     },
   );
+
+  it("exports a bounded safe-only model routing receipt projection", () => {
+    const validate = Compile(ModelRoutingReceiptV1Schema);
+    const receipt = {
+      schemaVersion: 1,
+      routingDecisionId: "model-routing:receipt-1",
+      occurredAt: 1,
+      outcome: "allowed",
+      reasonCode: "model_route_selected_after_fallback",
+      fallbackUsed: true,
+    };
+
+    expect(validate.Check(receipt)).toBe(true);
+    expect(validate.Check({ ...receipt, fallbackUsed: undefined })).toBe(true);
+    expect(validate.Check({ ...receipt, prompt: "secret prompt" })).toBe(false);
+    expect(validate.Check({ ...receipt, selectedModel: "gpt-5.6-sol" })).toBe(false);
+    expect(validate.Check({ ...receipt, rawReceipt: {} })).toBe(false);
+  });
 });

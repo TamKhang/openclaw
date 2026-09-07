@@ -38,6 +38,7 @@ function serializeAuditRunInspectResult(
     run: inspected.run,
     identity: inspected.identity,
     decisionDisplays: inspected.decisionDisplays,
+    modelRoutingReceipts: inspected.modelRoutingReceipts,
     coverage: inspected.coverage,
   };
   if (inspected.nextDecisionCursor !== undefined) {

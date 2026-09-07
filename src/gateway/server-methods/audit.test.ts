@@ -60,6 +60,7 @@ describe("audit gateway methods", () => {
       },
       decisions: [],
       decisionDisplays: [],
+      modelRoutingReceipts: [],
       coverage: { state: "unknown", missingEvidence: ["run.record"] },
     });
   });
@@ -390,6 +391,7 @@ describe("audit gateway methods", () => {
         },
       ],
       decisionDisplays: [],
+      modelRoutingReceipts: [],
       coverage: { state: "unknown", missingEvidence: ["run.record"] },
     });
 
@@ -399,7 +401,11 @@ describe("audit gateway methods", () => {
 
     expect(result).not.toHaveProperty("decisions");
     expect(result).toEqual(
-      expect.objectContaining({ decisionDisplays: [], coverage: expect.any(Object) }),
+      expect.objectContaining({
+        decisionDisplays: [],
+        modelRoutingReceipts: [],
+        coverage: expect.any(Object),
+      }),
     );
     for (const rawKey of ["receiptId", "resolutionRef", "eventId"]) {
       expect(json).not.toContain(`"${rawKey}"`);
@@ -407,6 +413,78 @@ describe("audit gateway methods", () => {
     for (const secret of Object.values(hostile)) {
       expect(json).not.toContain(secret);
     }
+  });
+
+  it("serializes bounded model routing receipts without raw receipt data", async () => {
+    inspectExecutionIdentityRun.mockReturnValueOnce({
+      schemaVersion: 1,
+      run: { runId: "run-1", executionId: "execution-1", status: "known" },
+      identity: {
+        state: "unknown",
+        reasonCode: "run_not_found",
+        missingEvidence: ["run.record"],
+        remediation: [],
+      },
+      decisions: [
+        {
+          schemaVersion: 1,
+          receiptId: "model-routing:raw-secret",
+          contextId: "private-context",
+          executionId: "private-execution",
+          runId: "private-run",
+          occurredAt: 1,
+          action: {
+            family: "model-routing",
+            operation: "automatic-selection",
+            summary: "private prompt or provider payload",
+          },
+          decision: { outcome: "allowed", reasonCode: "rate_limit" },
+          enforcement: {
+            coverageState: "attribution-only",
+            policyRefs: [],
+            grantRefs: [],
+            contextFieldsUsed: ["contextId"],
+          },
+          source: {
+            owner: "model-routing",
+            recordRef: "model-routing:raw-secret",
+            decisionBoundary: "agent-runtime.post-admission",
+          },
+          missingEvidence: [],
+          remediation: [],
+        },
+      ],
+      decisionDisplays: [],
+      modelRoutingReceipts: [
+        {
+          schemaVersion: 1,
+          routingDecisionId: "model-routing:raw-secret",
+          occurredAt: 1,
+          outcome: "allowed",
+          reasonCode: "rate_limit",
+          fallbackUsed: true,
+        },
+      ],
+      coverage: { state: "unknown", missingEvidence: ["run.record"] },
+    });
+
+    const respond = await runAuditHandler("audit.run.inspect", { executionId: "execution-1" });
+    const result = respond.mock.calls[0]?.[1];
+    const json = JSON.stringify(result);
+
+    expect(result.modelRoutingReceipts).toEqual([
+      {
+        schemaVersion: 1,
+        routingDecisionId: "model-routing:raw-secret",
+        occurredAt: 1,
+        outcome: "allowed",
+        reasonCode: "rate_limit",
+        fallbackUsed: true,
+      },
+    ]);
+    expect(result).not.toHaveProperty("decisions");
+    expect(json).not.toContain("private-context");
+    expect(json).not.toContain("private prompt or provider payload");
   });
 
   it.each([
@@ -463,13 +541,18 @@ describe("audit gateway methods", () => {
       identity,
       decisions: [],
       decisionDisplays: [],
+      modelRoutingReceipts: [],
       coverage: { state: "unknown", missingEvidence: [] },
     });
 
     const respond = await runAuditHandler("audit.run.inspect", { runId: "run-1" });
     const result = respond.mock.calls[0]?.[1];
     expect(result).toEqual(
-      expect.objectContaining({ decisionDisplays: [], coverage: expect.any(Object) }),
+      expect.objectContaining({
+        decisionDisplays: [],
+        modelRoutingReceipts: [],
+        coverage: expect.any(Object),
+      }),
     );
     expect(result).not.toHaveProperty("decisions");
     expect(JSON.stringify(result)).not.toContain('"decisions"');

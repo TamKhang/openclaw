@@ -414,6 +414,7 @@ function unavailableResult(params: {
     },
     decisions: [],
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state: params.state, missingEvidence: params.missingEvidence },
   };
 }
@@ -591,6 +592,7 @@ function inspectRunSelector(
         },
         decisions: [],
         decisionDisplays: [],
+        modelRoutingReceipts: [],
         coverage: { state: "unknown", missingEvidence: ["execution.selection"] },
         ...(page.length > limit ? { nextExecutionCursor: String(offset + limit) } : {}),
       };

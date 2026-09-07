@@ -271,6 +271,7 @@ function unsupportedRunInspection(
       ],
     },
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state: "unsupported", missingEvidence },
   };
 }

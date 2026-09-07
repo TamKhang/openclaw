@@ -316,6 +316,7 @@ export {
   ExecutionIdentityContextV1Schema,
   DecisionReceiptV1Schema,
   DecisionReceiptDisplayV1Schema,
+  ModelRoutingReceiptV1Schema,
   AuditRunIdentityPresentV1Schema,
   AuditRunIdentityUnknownV1Schema,
   AuditRunIdentityUnsupportedV1Schema,

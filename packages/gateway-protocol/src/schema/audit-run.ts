@@ -246,6 +246,20 @@ export const DecisionReceiptDisplayV1Schema = closedObject({
   remediation: Type.Array(ExecutionIdentityRemediationV1Schema, { maxItems: 8 }),
 });
 
+export const ModelRoutingReceiptV1Schema = closedObject({
+  schemaVersion: Type.Literal(1),
+  routingDecisionId: ExecutionIdentityRefSchema,
+  occurredAt: Type.Integer({ minimum: 0 }),
+  outcome: Type.Union([
+    Type.Literal("allowed"),
+    Type.Literal("denied"),
+    Type.Literal("not-applicable"),
+    Type.Literal("unknown"),
+  ]),
+  reasonCode: ExecutionIdentityRefSchema,
+  fallbackUsed: Type.Optional(Type.Boolean()),
+});
+
 export const AuditRunIdentityPresentV1Schema = closedObject({
   state: Type.Literal("present"),
   context: ExecutionIdentityContextV1Schema,
@@ -329,6 +343,7 @@ export const AuditRunInspectResultSchema = closedObject({
   }),
   identity: AuditRunIdentityV1Schema,
   decisionDisplays: Type.Array(DecisionReceiptDisplayV1Schema, { maxItems: 100 }),
+  modelRoutingReceipts: Type.Array(ModelRoutingReceiptV1Schema, { maxItems: 100 }),
   coverage: closedObject({
     state: ExecutionIdentityDecisionCoverageStateSchema,
     missingEvidence: ExecutionIdentityRefArraySchema,
@@ -341,6 +356,7 @@ export type PrincipalRefV1 = Static<typeof PrincipalRefV1Schema>;
 export type ExecutionIdentityContextV1 = Static<typeof ExecutionIdentityContextV1Schema>;
 export type DecisionReceiptV1 = Static<typeof DecisionReceiptV1Schema>;
 export type DecisionReceiptDisplayV1 = Static<typeof DecisionReceiptDisplayV1Schema>;
+export type ModelRoutingReceiptV1 = Static<typeof ModelRoutingReceiptV1Schema>;
 export type AuditRunIdentityV1 = Static<typeof AuditRunIdentityV1Schema>;
 type AuditRunDecisionPage = {
   decisionCursor?: string;

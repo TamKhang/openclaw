@@ -77,6 +77,7 @@ function presentResult(): RunInspectorResult {
         ],
       },
     ],
+    modelRoutingReceipts: [],
     coverage: { state: "unattributed", missingEvidence: ["invoker.principal"] },
     nextDecisionCursor: "1",
   };
@@ -97,6 +98,7 @@ function unavailableResult(
       remediation,
     },
     decisionDisplays: [],
+    modelRoutingReceipts: [],
     coverage: { state, missingEvidence: ["identity.context"] },
   };
 }
@@ -242,6 +244,7 @@ describe("renderRunInspector", () => {
         remediation: [],
       },
       decisionDisplays: [],
+      modelRoutingReceipts: [],
       coverage: { state: "unknown", missingEvidence: ["execution.selection"] },
       nextExecutionCursor: "opaque-cursor",
     };
