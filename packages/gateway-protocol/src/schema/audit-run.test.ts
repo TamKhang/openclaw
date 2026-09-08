@@ -230,12 +230,80 @@ describe("audit run inspection protocol", () => {
       outcome: "allowed",
       reasonCode: "model_route_selected_after_fallback",
       fallbackUsed: true,
+      selectedProvider: "openai",
+      selectedModel: "gpt-5.6-sol",
     };
 
     expect(validate.Check(receipt)).toBe(true);
     expect(validate.Check({ ...receipt, fallbackUsed: undefined })).toBe(true);
     expect(validate.Check({ ...receipt, prompt: "secret prompt" })).toBe(false);
-    expect(validate.Check({ ...receipt, selectedModel: "gpt-5.6-sol" })).toBe(false);
+    expect(validate.Check({ ...receipt, selectedProvider: undefined })).toBe(false);
+    expect(validate.Check({ ...receipt, selectedModel: undefined })).toBe(false);
+    expect(validate.Check({ ...receipt, selectedProvider: "a".repeat(257) })).toBe(false);
+    expect(validate.Check({ ...receipt, selectedModel: "a".repeat(257) })).toBe(false);
     expect(validate.Check({ ...receipt, rawReceipt: {} })).toBe(false);
+  });
+
+  it("accepts structured model-routing selection fields on decision receipts", () => {
+    const validateReceipt = Compile(DecisionReceiptV1Schema);
+    expect(
+      validateReceipt.Check({
+        schemaVersion: 1,
+        receiptId: "model-routing:receipt-1",
+        contextId: "context-1",
+        executionId: "execution-1",
+        runId: "run-1",
+        occurredAt: 1,
+        modelRouting: {
+          selectedProvider: "openai",
+          selectedModel: "gpt-5.6-sol",
+        },
+        action: {
+          family: "model-routing",
+          operation: "automatic-selection",
+          summary: "Requested unrelated/provider; selected unrelated/model.",
+        },
+        decision: { outcome: "allowed", reasonCode: "model_route_selected" },
+        enforcement: {
+          coverageState: "attribution-only",
+          policyRefs: [],
+          grantRefs: [],
+          contextFieldsUsed: [],
+        },
+        source: {
+          owner: "model-routing",
+          recordRef: "model-routing:receipt-1",
+          decisionBoundary: "agent-runtime.post-admission",
+        },
+        missingEvidence: [],
+        remediation: [],
+      }),
+    ).toBe(true);
+    expect(
+      validateReceipt.Check({
+        schemaVersion: 1,
+        receiptId: "model-routing:receipt-1",
+        contextId: "context-1",
+        executionId: "execution-1",
+        runId: "run-1",
+        occurredAt: 1,
+        modelRouting: { selectedProvider: "openai" },
+        action: { family: "model-routing", operation: "automatic-selection" },
+        decision: { outcome: "allowed", reasonCode: "model_route_selected" },
+        enforcement: {
+          coverageState: "attribution-only",
+          policyRefs: [],
+          grantRefs: [],
+          contextFieldsUsed: [],
+        },
+        source: {
+          owner: "model-routing",
+          recordRef: "model-routing:receipt-1",
+          decisionBoundary: "agent-runtime.post-admission",
+        },
+        missingEvidence: [],
+        remediation: [],
+      }),
+    ).toBe(false);
   });
 });

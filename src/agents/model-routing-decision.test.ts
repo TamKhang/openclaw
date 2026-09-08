@@ -66,6 +66,9 @@ describe("admitted model routing decisions", () => {
         action: { family: "model-routing", operation: "explicit-selection" },
         decision: { reasonCode: "rate_limit" },
         enforcement: { coverageState: "attribution-only" },
+        modelRouting: {
+          selectedProvider: "openai",
+        },
       },
       refs: {
         resource: { namespace: "credential-profile", value: rawProfile },
@@ -74,6 +77,7 @@ describe("admitted model routing decisions", () => {
     });
     expect(JSON.stringify(captured[0]?.receipt)).not.toContain(rawProfile);
     expect(JSON.stringify(captured[0]?.receipt)).not.toContain("selected-model-secret");
+    expect(captured[0]?.receipt.modelRouting?.selectedModel).not.toContain("selected-model-secret");
     expect(captured[0]?.refs?.target?.value).toContain(rawTargetSecret);
   });
 
@@ -112,6 +116,10 @@ describe("admitted model routing decisions", () => {
     expect(captured[0]?.receipt).toMatchObject({
       enforcement: { coverageState: "unknown" },
       missingEvidence: ["credential_profile_owner"],
+      modelRouting: {
+        selectedProvider: "openai",
+        selectedModel: "gpt-5.6",
+      },
     });
     expect(captured[0]?.refs?.resource).toBeUndefined();
   });

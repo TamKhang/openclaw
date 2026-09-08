@@ -231,7 +231,10 @@ function isAuthoritativeModelRoutingReceipt(receipt: DecisionReceiptV1): boolean
   );
 }
 
-function projectModelRoutingReceipt(receipt: DecisionReceiptV1): ModelRoutingReceiptV1 {
+function projectModelRoutingReceipt(receipt: DecisionReceiptV1): ModelRoutingReceiptV1 | undefined {
+  if (!receipt.modelRouting) {
+    return undefined;
+  }
   const fallbackUsed = MODEL_ROUTING_FALLBACK_REASON_CODES.has(receipt.decision.reasonCode);
   return {
     schemaVersion: 1,
@@ -239,6 +242,8 @@ function projectModelRoutingReceipt(receipt: DecisionReceiptV1): ModelRoutingRec
     occurredAt: receipt.occurredAt,
     outcome: receipt.decision.outcome,
     reasonCode: receipt.decision.reasonCode,
+    selectedProvider: receipt.modelRouting.selectedProvider,
+    selectedModel: receipt.modelRouting.selectedModel,
     ...(fallbackUsed ? { fallbackUsed: true } : {}),
   };
 }
@@ -515,7 +520,8 @@ export function presentExecutionDecisionReceipts(params: {
     decisionDisplays: decisions.map(projectDecisionDisplay),
     modelRoutingReceipts: decisions
       .filter(({ receipt }) => isAuthoritativeModelRoutingReceipt(receipt))
-      .map(({ receipt }) => projectModelRoutingReceipt(receipt)),
+      .map(({ receipt }) => projectModelRoutingReceipt(receipt))
+      .filter((receipt): receipt is ModelRoutingReceiptV1 => receipt !== undefined),
     coverage: { state: coverageState, missingEvidence: boundedEvidence.missingEvidence },
     ...(nextDecisionCursor ? { nextDecisionCursor } : {}),
   };

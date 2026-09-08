@@ -438,6 +438,10 @@ describe("audit gateway methods", () => {
             operation: "automatic-selection",
             summary: "private prompt or provider payload",
           },
+          modelRouting: {
+            selectedProvider: "openai",
+            selectedModel: "gpt-5.6",
+          },
           decision: { outcome: "allowed", reasonCode: "rate_limit" },
           enforcement: {
             coverageState: "attribution-only",
@@ -463,6 +467,8 @@ describe("audit gateway methods", () => {
           outcome: "allowed",
           reasonCode: "rate_limit",
           fallbackUsed: true,
+          selectedProvider: "openai",
+          selectedModel: "gpt-5.6",
         },
       ],
       coverage: { state: "unknown", missingEvidence: ["run.record"] },
@@ -480,11 +486,15 @@ describe("audit gateway methods", () => {
         outcome: "allowed",
         reasonCode: "rate_limit",
         fallbackUsed: true,
+        selectedProvider: "openai",
+        selectedModel: "gpt-5.6",
       },
     ]);
     expect(result).not.toHaveProperty("decisions");
     expect(json).not.toContain("private-context");
     expect(json).not.toContain("private prompt or provider payload");
+    expect(json).not.toContain("requestedProvider");
+    expect(json).not.toContain("requestedModel");
   });
 
   it.each([

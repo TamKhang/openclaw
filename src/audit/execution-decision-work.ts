@@ -117,6 +117,7 @@ export function parseExecutionDecisionWork(value: unknown): ExecutionDecisionWor
       "schemaVersion",
       "receiptId",
       "actionId",
+      "modelRouting",
       "occurredAt",
       "action",
       "decision",

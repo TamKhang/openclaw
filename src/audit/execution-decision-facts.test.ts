@@ -136,10 +136,14 @@ function modelRoutingReceipt(id: string, reasonCode: string, occurredAt = 100): 
     executionId: "execution-1",
     runId: "run-1",
     occurredAt,
+    modelRouting: {
+      selectedProvider: "openai",
+      selectedModel: "gpt-5.6",
+    },
     action: {
       family: "model-routing",
       operation: "automatic-selection",
-      summary: `Requested requested-provider/requested-model; selected selected-provider/selected-model.`,
+      summary: `Requested unrelated-provider/unrelated-model; selected forged-provider/forged-model.`,
     },
     decision: { outcome: "allowed", reasonCode },
     enforcement: {
@@ -1089,14 +1093,18 @@ describe("execution decision facts", () => {
         occurredAt: 100,
         outcome: "allowed",
         reasonCode: "model_route_selected",
+        selectedProvider: "openai",
+        selectedModel: "gpt-5.6",
       },
     ]);
     const json = JSON.stringify(result.modelRoutingReceipts);
     expect(json).not.toContain("summary");
     expect(json).not.toContain("contextId");
     expect(json).not.toContain("runId");
-    expect(json).not.toContain("requested-provider");
-    expect(json).not.toContain("selected-provider");
+    expect(json).not.toContain("requestedProvider");
+    expect(json).not.toContain("requestedModel");
+    expect(json).not.toContain("unrelated-provider");
+    expect(json).not.toContain("forged-provider");
   });
 
   it("bounds multiple routing receipts and marks fallback only from authoritative reason codes", () => {
@@ -1125,6 +1133,8 @@ describe("execution decision facts", () => {
         outcome: "allowed",
         reasonCode: "rate_limit",
         fallbackUsed: true,
+        selectedProvider: "openai",
+        selectedModel: "gpt-5.6",
       },
       {
         schemaVersion: 1,
@@ -1132,6 +1142,49 @@ describe("execution decision facts", () => {
         occurredAt: 102,
         outcome: "allowed",
         reasonCode: "model_route_selected",
+        selectedProvider: "openai",
+        selectedModel: "gpt-5.6",
+      },
+    ]);
+  });
+
+  it("persists authoritative model routing selection fields in receipt_json", () => {
+    const database = databaseOptions();
+    const context = seedExecutionContext(database);
+    recordExecutionDecisionFact(
+      modelRoutingReceipt("model-routing:structured", "model_route_selected"),
+      {
+        ...database,
+        now: 100,
+      },
+    );
+
+    const page = pageExecutionDecisionFactsForContext({
+      context: { contextId: "context-1", executionId: "execution-1", runId: "run-1" },
+      limit: 1,
+      now: 100,
+      database,
+    });
+    expect(page.receipts[0]?.modelRouting).toEqual({
+      selectedProvider: "openai",
+      selectedModel: "gpt-5.6",
+    });
+
+    const result = presentExecutionDecisionReceipts({
+      context,
+      decisionCursor: "g:0:0",
+      decisionLimit: 1,
+      options: { ...database, now: 100 },
+    });
+    expect(result.modelRoutingReceipts).toEqual([
+      {
+        schemaVersion: 1,
+        routingDecisionId: "model-routing:structured",
+        occurredAt: 100,
+        outcome: "allowed",
+        reasonCode: "model_route_selected",
+        selectedProvider: "openai",
+        selectedModel: "gpt-5.6",
       },
     ]);
   });

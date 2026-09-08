@@ -11,8 +11,17 @@ import type { FailoverReason } from "./failover/signal.js";
 
 type ModelRoutingSelectionMode = "automatic" | "explicit";
 
+function boundedModelRoutePart(value: string): string {
+  return truncateUtf16Safe(redactSensitiveText(value, { mode: "tools" }), 256);
+}
+
 function boundedModelRef(provider: string, model: string): string {
-  return truncateUtf16Safe(redactSensitiveText(`${provider}/${model}`, { mode: "tools" }), 160);
+  return truncateUtf16Safe(
+    redactSensitiveText(`${boundedModelRoutePart(provider)}/${boundedModelRoutePart(model)}`, {
+      mode: "tools",
+    }),
+    160,
+  );
 }
 
 /** Queue only selected routes that already own an admitted execution token. */
@@ -37,6 +46,8 @@ export function recordAdmittedModelRoutingDecision(params: {
   const receiptId = `model-routing:${randomUUID()}`;
   const requestedRef = boundedModelRef(params.requestedProvider, params.requestedModel);
   const selectedRef = boundedModelRef(params.selectedProvider, params.selectedModel);
+  const selectedProvider = boundedModelRoutePart(params.selectedProvider);
+  const selectedModel = boundedModelRoutePart(params.selectedModel);
   const credentialProfileId = params.credentialProfileId?.trim();
   const hasCredentialOwner = Boolean(credentialProfileId);
   const reasonCode =
@@ -54,6 +65,10 @@ export function recordAdmittedModelRoutingDecision(params: {
       schemaVersion: 1,
       receiptId,
       occurredAt: params.occurredAt ?? Date.now(),
+      modelRouting: {
+        selectedProvider,
+        selectedModel,
+      },
       action: {
         family: "model-routing",
         operation: `${params.selectionMode}-selection`,

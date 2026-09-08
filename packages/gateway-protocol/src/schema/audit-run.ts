@@ -24,6 +24,7 @@ const ExecutionIdentityDecisionCoverageStateSchema = Type.Union([
   Type.Literal("unsupported"),
 ]);
 const ExecutionIdentityRefArraySchema = Type.Array(ExecutionIdentityRefSchema, { maxItems: 16 });
+const ModelRoutingIdentifierSchema = Type.String({ minLength: 1, maxLength: 256 });
 
 const ExecutionIdentityPrincipalKindSchema = Type.Union([
   Type.Literal("person"),
@@ -169,6 +170,12 @@ export const DecisionReceiptV1Schema = closedObject({
   executionId: ExecutionIdentityRefSchema,
   runId: ExecutionIdentityRefSchema,
   actionId: Type.Optional(ExecutionIdentityRefSchema),
+  modelRouting: Type.Optional(
+    closedObject({
+      selectedProvider: ModelRoutingIdentifierSchema,
+      selectedModel: ModelRoutingIdentifierSchema,
+    }),
+  ),
   occurredAt: Type.Integer({ minimum: 0 }),
   action: closedObject({
     family: ExecutionIdentityRefSchema,
@@ -258,6 +265,8 @@ export const ModelRoutingReceiptV1Schema = closedObject({
   ]),
   reasonCode: ExecutionIdentityRefSchema,
   fallbackUsed: Type.Optional(Type.Boolean()),
+  selectedProvider: ModelRoutingIdentifierSchema,
+  selectedModel: ModelRoutingIdentifierSchema,
 });
 
 export const AuditRunIdentityPresentV1Schema = closedObject({
