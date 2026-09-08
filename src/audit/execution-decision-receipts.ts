@@ -244,7 +244,7 @@ function projectModelRoutingReceipt(receipt: DecisionReceiptV1): ModelRoutingRec
     reasonCode: receipt.decision.reasonCode,
     selectedProvider: receipt.modelRouting.selectedProvider,
     selectedModel: receipt.modelRouting.selectedModel,
-    ...(fallbackUsed ? { fallbackUsed: true } : {}),
+    fallbackUsed,
   };
 }
 
