@@ -18,7 +18,9 @@ import {
 const log = createSubsystemLogger("bruno-model-routing");
 
 export type BrunoModelRoutingFacts = {
-  /** Bounded prompt size only. Never the prompt text. */
+  /** Bounded semantic prompt text used only for complexity classification. */
+  promptText: string;
+  /** Prompt size metadata only. Never used to classify complexity. */
   bodyLength: number;
   isGroup: boolean;
   senderIsOwner: boolean;
@@ -406,6 +408,7 @@ export async function createBrunoBrainModelRouter(params?: {
   return {
     route(facts, context) {
       const decision = routeModelWithPolicyForTurn({
+        prompt_text: facts.promptText,
         body_length: facts.bodyLength,
         is_group: facts.isGroup,
         sender_is_owner: facts.senderIsOwner,

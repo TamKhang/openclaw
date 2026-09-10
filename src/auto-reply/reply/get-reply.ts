@@ -1255,6 +1255,7 @@ export async function getReplyFromConfig(
         chatType: finalized.ChatType ?? sessionCtx.ChatType,
       },
       facts: {
+        promptText: normalizeOptionalString(cleanedBody) ?? cleanedBody,
         bodyLength: normalizeOptionalString(cleanedBody)?.length ?? 0,
         isGroup,
         senderIsOwner: command.senderIsOwner,
