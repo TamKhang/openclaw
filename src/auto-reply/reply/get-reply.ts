@@ -1,4 +1,5 @@
 // Main auto-reply pipeline: prepares context, runs commands, and dispatches agents.
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isImplicitAcpWorkspaceCandidate } from "../../agents/agent-scope-config.js";
@@ -11,6 +12,10 @@ import {
   resolveSessionAgentId,
   resolveAgentSkillsFilter,
 } from "../../agents/agent-scope.js";
+import {
+  isBrunoModelRoutingEnabled,
+  routeConversationalTurnWithBruno,
+} from "../../agents/bruno-model-routing.js";
 import { resolveConversationCapabilityProfile } from "../../agents/conversation-capability-profile.js";
 import { projectConversationToolNames } from "../../agents/conversation-tool-policy-pipeline.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
@@ -1168,8 +1173,9 @@ export async function getReplyFromConfig(
   const runAutoFallbackPrimaryProbe = directives.hasModelDirective
     ? undefined
     : autoFallbackPrimaryProbe;
-  const runProvider = runAutoFallbackPrimaryProbe?.provider ?? provider;
-  const runModel = runAutoFallbackPrimaryProbe?.model ?? model;
+  let runProvider = runAutoFallbackPrimaryProbe?.provider ?? provider;
+  let runModel = runAutoFallbackPrimaryProbe?.model ?? model;
+  let brunoApprovedFallbacks: string[] | undefined;
   let runModelState = modelState;
   if (runAutoFallbackPrimaryProbe) {
     try {
@@ -1238,6 +1244,37 @@ export async function getReplyFromConfig(
         thinkingActive || hasExplicitThinkLevel
           ? "off"
           : await runModelState.resolveDefaultReasoningLevel();
+    }
+  }
+
+  if (!directives.hasModelDirective) {
+    const brunoRoutingResult = await routeConversationalTurnWithBruno({
+      enabled: isBrunoModelRoutingEnabled(),
+      scope: {
+        messageProvider: finalized.Provider ?? sessionCtx.Provider,
+        chatType: finalized.ChatType ?? sessionCtx.ChatType,
+      },
+      facts: {
+        bodyLength: normalizeOptionalString(cleanedBody)?.length ?? 0,
+        isGroup,
+        senderIsOwner: command.senderIsOwner,
+        commandAuthorized: command.isAuthorizedSender || command.senderIsOwner,
+      },
+      sessionKey,
+      traceId: randomUUID(),
+      requestedProvider: runProvider,
+      requestedModel: runModel,
+    });
+    if (brunoRoutingResult.kind === "fail-closed") {
+      typing.cleanup();
+      return { text: brunoRoutingResult.message };
+    }
+    if (brunoRoutingResult.kind === "selected") {
+      runProvider = brunoRoutingResult.provider;
+      runModel = brunoRoutingResult.model;
+      brunoApprovedFallbacks = brunoRoutingResult.fallbackAlternatives.map(
+        (candidate) => `${candidate.provider}/${candidate.model}`,
+      );
     }
   }
 
@@ -1322,6 +1359,7 @@ export async function getReplyFromConfig(
       modelState: runModelState,
       provider: runProvider,
       model: runModel,
+      brunoApprovedFallbacks,
       requestedRouteResolution: runAutoFallbackPrimaryProbe
         ? runModelState.requestedRouteResolution
         : requestedRouteResolution,

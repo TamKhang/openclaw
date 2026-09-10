@@ -47,7 +47,9 @@ export function resolveModelFallbackOptions(
     agentId: run.agentId,
     sessionKey: run.runtimePolicySessionKey ?? run.sessionKey,
     modelFallbackAvailability,
-    fallbacksOverride: modelFallbackOverrideFromAvailability(modelFallbackAvailability),
+    fallbacksOverride:
+      run.brunoApprovedFallbacks ??
+      modelFallbackOverrideFromAvailability(modelFallbackAvailability),
   };
 }
 

@@ -448,6 +448,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       skillsSnapshot,
       provider,
       model,
+      brunoApprovedFallbacks: params.brunoApprovedFallbacks,
       requestedRouteResolution,
       modelSelectionLocked: preparedSessionState.sessionEntry?.modelSelectionLocked === true,
       hasSessionModelOverride: runHasSessionModelOverride,

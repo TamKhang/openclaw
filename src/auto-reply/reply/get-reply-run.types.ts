@@ -77,6 +77,8 @@ export type RunPreparedReplyParams = {
   modelState: Awaited<ReturnType<typeof createModelSelectionState>>;
   provider: string;
   model: string;
+  /** Bruno-approved ordered fallback refs; when present, replaces legacy fallbacks. */
+  brunoApprovedFallbacks?: string[];
   requestedRouteResolution?: Awaited<
     ReturnType<typeof createModelSelectionState>
   >["requestedRouteResolution"];

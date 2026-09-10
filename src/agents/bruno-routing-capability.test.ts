@@ -17,6 +17,20 @@ function groupReplyAuthorization(): PluginHookOutboundGroupReplyAuthorization {
   };
 }
 
+/**
+ * Type-safe fixture for rejection tests. The runtime intentionally injects an
+ * invalid capability string, so only this single field is narrowed to the
+ * declared literal union. No broad cast is used.
+ */
+function groupReplyAuthorizationWithCapability(
+  capability: string,
+): PluginHookOutboundGroupReplyAuthorization {
+  return {
+    ...groupReplyAuthorization(),
+    capability: capability as PluginHookOutboundGroupReplyAuthorization["capability"],
+  };
+}
+
 describe("resolveTrustedBrunoRoutingCapability", () => {
   it("derives whatsapp.dm.standard for WhatsApp direct-message context", () => {
     expect(
@@ -51,10 +65,9 @@ describe("resolveTrustedBrunoRoutingCapability", () => {
       resolveTrustedBrunoRoutingCapability({
         messageProvider: "whatsapp",
         chatType: "group",
-        outboundGroupReplyAuthorization: {
-          ...groupReplyAuthorization(),
-          capability: "whatsapp.dm.premium_requested",
-        } as PluginHookOutboundGroupReplyAuthorization,
+        outboundGroupReplyAuthorization: groupReplyAuthorizationWithCapability(
+          "whatsapp.dm.premium_requested",
+        ),
       }),
     ).toBeUndefined();
   });

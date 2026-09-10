@@ -204,6 +204,8 @@ export type FollowupRun = {
     skillsSnapshot?: SkillSnapshot;
     provider: string;
     model: string;
+    /** Bruno-approved ordered fallback refs; replaces legacy fallbacks when set. */
+    brunoApprovedFallbacks?: string[];
     requestedRouteResolution?: ModelFallbackRouteResolution;
     /** Prevents the queued run from selecting configured fallback models. */
     modelSelectionLocked?: boolean;
