@@ -7,6 +7,8 @@
  * The bridge is side-effect free apart from bounded telemetry. It never logs
  * prompt content, credentials, keys, or user data.
  */
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   resolveTrustedBrunoRoutingCapability,
@@ -287,6 +289,81 @@ export async function routeConversationalTurnWithBruno(params: {
   };
 }
 
+export type BrunoModelRoutingInitializationResult =
+  | { status: "disabled" }
+  | { status: "initialized"; moduleSpecifier: string }
+  | { status: "failed"; reason: "module-unavailable" | "invalid-module"; moduleSpecifier?: string };
+
+let initialization: BrunoModelRoutingInitializationResult | null = null;
+let initializationPromise: Promise<BrunoModelRoutingInitializationResult> | null = null;
+
+/** Test-only reset for the process-once initialization latch. */
+export function resetBrunoModelRoutingInitializationForTest(): void {
+  initialization = null;
+  initializationPromise = null;
+  setBrunoModelRouter(null);
+}
+
+/**
+ * Once-per-gateway-process startup wiring. Safe to call repeatedly; the first
+ * invocation owns the work and later calls return the same settled result.
+ */
+export async function initializeBrunoModelRouting(params?: {
+  env?: NodeJS.ProcessEnv;
+  loadModule?: (specifier: string) => Promise<unknown>;
+}): Promise<BrunoModelRoutingInitializationResult> {
+  if (initialization) {
+    return initialization;
+  }
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+  initializationPromise = (async () => {
+    const env = params?.env ?? process.env;
+    if (!isBrunoModelRoutingEnabled(env)) {
+      setBrunoModelRouter(null);
+      const result: BrunoModelRoutingInitializationResult = { status: "disabled" };
+      initialization = result;
+      log.info("bruno_model_routing_initialization", { status: "disabled" });
+      return result;
+    }
+
+    const moduleSpecifier = env.OPENCLAW_BRUNO_MODEL_ROUTING_MODULE ?? "bruno-brain";
+    const router = await createBrunoBrainModelRouter({
+      moduleSpecifier,
+      ...(params?.loadModule ? { load: () => params.loadModule!(moduleSpecifier) } : {}),
+    });
+    if (!router) {
+      setBrunoModelRouter(null);
+      const result: BrunoModelRoutingInitializationResult = {
+        status: "failed",
+        reason: "module-unavailable",
+        moduleSpecifier,
+      };
+      initialization = result;
+      log.warn("bruno_model_routing_initialization", {
+        status: "failed",
+        reason: result.reason,
+        moduleSpecifier,
+      });
+      return result;
+    }
+
+    setBrunoModelRouter(router);
+    const result: BrunoModelRoutingInitializationResult = {
+      status: "initialized",
+      moduleSpecifier,
+    };
+    initialization = result;
+    log.info("bruno_model_routing_initialization", {
+      status: "initialized",
+      moduleSpecifier,
+    });
+    return result;
+  })();
+  return initializationPromise;
+}
+
 export type BrunoBrainModelRoutingModule = {
   routeModelWithPolicyForTurn?: (
     facts: unknown,
@@ -314,9 +391,10 @@ export async function createBrunoBrainModelRouter(params?: {
 }): Promise<BrunoModelRouter | null> {
   const specifier =
     params?.moduleSpecifier ?? process.env.OPENCLAW_BRUNO_MODEL_ROUTING_MODULE ?? "bruno-brain";
+  const importSpecifier = path.isAbsolute(specifier) ? pathToFileURL(specifier).href : specifier;
   let loaded: unknown;
   try {
-    loaded = params?.load ? await params.load() : await import(specifier);
+    loaded = params?.load ? await params.load() : await import(importSpecifier);
   } catch {
     return null;
   }

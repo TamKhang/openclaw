@@ -1,4 +1,5 @@
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import { initializeBrunoModelRouting } from "../agents/bruno-model-routing.js";
 import {
   getLoadedChannelPluginEntryById,
   listLoadedChannelPlugins,
@@ -239,6 +240,8 @@ export async function startGatewayCoreRuntime(input: {
     ),
   );
   kernel.setEarlyRuntimeHandles(earlyRuntime);
+
+  await startupTrace.measure("runtime.bruno-model-routing", () => initializeBrunoModelRouting());
 
   const [{ startGatewayEventSubscriptions }, { startGatewayChannelHealthMonitor }] =
     await startupTrace.measure("runtime.post-early-imports", () =>

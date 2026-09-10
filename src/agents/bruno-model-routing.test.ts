@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BRUNO_MODEL_ROUTING_FAIL_CLOSED_TEXT,
   createBrunoBrainModelRouter,
+  getBrunoModelRouter,
+  initializeBrunoModelRouting,
   isBrunoModelRoutingEnabled,
+  resetBrunoModelRoutingInitializationForTest,
   routeConversationalTurnWithBruno,
   setBrunoModelRouter,
   type BrunoModelRouter,
@@ -35,7 +38,7 @@ const facts = {
 const whatsappDm = { messageProvider: "whatsapp", chatType: "direct" };
 
 afterEach(() => {
-  setBrunoModelRouter(null);
+  resetBrunoModelRoutingInitializationForTest();
 });
 
 describe("isBrunoModelRoutingEnabled", () => {
@@ -244,5 +247,83 @@ describe("createBrunoBrainModelRouter adapter", () => {
       load: async () => ({}),
     });
     expect(router).toBeNull();
+  });
+});
+
+describe("initializeBrunoModelRouting startup wiring", () => {
+  function validModule() {
+    return {
+      routeModelWithPolicyForTurn: () => ({
+        reason: "selected",
+        selected_model: { provider: "deepseek", model: "deepseek-v4-flash" },
+        policy_version: "model-router-v0.1",
+        fallback_alternatives: [],
+        classification: {
+          task_type: "reasoning",
+          complexity: "medium",
+          risk_level: "low",
+        },
+      }),
+    };
+  }
+
+  it("does not load a module and leaves no router when the gate is disabled", async () => {
+    const loadModule = vi.fn(async () => validModule());
+    const result = await initializeBrunoModelRouting({
+      env: { OPENCLAW_BRUNO_MODEL_ROUTING: undefined },
+      loadModule,
+    });
+    expect(result).toEqual({ status: "disabled" });
+    expect(loadModule).not.toHaveBeenCalled();
+    expect(getBrunoModelRouter()).toBeNull();
+  });
+
+  it("registers a valid adapter exactly once and is idempotent", async () => {
+    const loadModule = vi.fn(async () => validModule());
+    const first = await initializeBrunoModelRouting({
+      env: { OPENCLAW_BRUNO_MODEL_ROUTING: "1" },
+      loadModule,
+    });
+    const second = await initializeBrunoModelRouting({
+      env: { OPENCLAW_BRUNO_MODEL_ROUTING: "1" },
+      loadModule,
+    });
+    expect(first).toEqual({ status: "initialized", moduleSpecifier: "bruno-brain" });
+    expect(second).toBe(first);
+    expect(loadModule).toHaveBeenCalledTimes(1);
+    expect(getBrunoModelRouter()).not.toBeNull();
+  });
+
+  it("fails with no registered router for a missing module path", async () => {
+    const result = await initializeBrunoModelRouting({
+      env: {
+        OPENCLAW_BRUNO_MODEL_ROUTING: "1",
+        OPENCLAW_BRUNO_MODEL_ROUTING_MODULE: "/does/not/exist/bruno-brain.js",
+      },
+    });
+    expect(result.status).toBe("failed");
+    expect(getBrunoModelRouter()).toBeNull();
+  });
+
+  it("fails with no registered router when routeModelWithPolicyForTurn is missing", async () => {
+    const result = await initializeBrunoModelRouting({
+      env: { OPENCLAW_BRUNO_MODEL_ROUTING: "1" },
+      loadModule: async () => ({}),
+    });
+    expect(result.status).toBe("failed");
+    expect(getBrunoModelRouter()).toBeNull();
+  });
+
+  it("keeps Bruno-controlled turns fail-closed after startup failure", async () => {
+    await initializeBrunoModelRouting({
+      env: { OPENCLAW_BRUNO_MODEL_ROUTING: "1" },
+      loadModule: async () => ({}),
+    });
+    const turn = await routeConversationalTurnWithBruno({
+      enabled: true,
+      scope: { messageProvider: "whatsapp", chatType: "direct" },
+      facts,
+    });
+    expect(turn).toMatchObject({ kind: "fail-closed", reason: "router-unavailable" });
   });
 });

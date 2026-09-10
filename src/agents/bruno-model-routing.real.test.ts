@@ -1,7 +1,13 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
-import { createBrunoBrainModelRouter } from "./bruno-model-routing.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createBrunoBrainModelRouter,
+  getBrunoModelRouter,
+  initializeBrunoModelRouting,
+  resetBrunoModelRoutingInitializationForTest,
+  routeConversationalTurnWithBruno,
+} from "./bruno-model-routing.js";
 
 const brunoBrainModelRouterDist =
   process.env.OPENCLAW_BRUNO_BRAIN_DIST ??
@@ -20,6 +26,10 @@ type RealBrunoModule = typeof import("./bruno-model-routing.js") & {
     };
   };
 };
+
+afterEach(() => {
+  resetBrunoModelRoutingInitializationForTest();
+});
 
 async function loadRealBruno(): Promise<RealBrunoModule> {
   const mod = await import(pathToFileURL(brunoBrainModelRouterDist).href);
@@ -143,5 +153,43 @@ describe("real Bruno Brain model-routing integration", () => {
       riskLevel: "low",
     });
     expect(decision.fallbackAlternatives?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("real Bruno Brain startup wiring", () => {
+  it("loads the configured absolute compiled module path", async () => {
+    const router = await createBrunoBrainModelRouter({
+      moduleSpecifier: brunoBrainModelRouterDist,
+    });
+    expect(router).not.toBeNull();
+  });
+
+  it("initializes once and routes an ordinary turn through the real Bruno Brain", async () => {
+    const result = await initializeBrunoModelRouting({
+      env: {
+        OPENCLAW_BRUNO_MODEL_ROUTING: "1",
+        OPENCLAW_BRUNO_MODEL_ROUTING_MODULE: brunoBrainModelRouterDist,
+      },
+    });
+    expect(result).toEqual({ status: "initialized", moduleSpecifier: brunoBrainModelRouterDist });
+    expect(getBrunoModelRouter()).not.toBeNull();
+
+    const turn = await routeConversationalTurnWithBruno({
+      enabled: true,
+      scope: { messageProvider: "whatsapp", chatType: "direct" },
+      facts: {
+        bodyLength: 600,
+        isGroup: false,
+        senderIsOwner: true,
+        commandAuthorized: false,
+      },
+      sessionKey: "agent:main:whatsapp:real",
+      traceId: "trace-real-startup",
+    });
+    expect(turn.kind).toBe("selected");
+    if (turn.kind === "selected") {
+      expect(turn.classification).toMatchObject({ complexity: "medium", riskLevel: "low" });
+      expect(turn.fallbackAlternatives.length).toBeGreaterThan(0);
+    }
   });
 });
