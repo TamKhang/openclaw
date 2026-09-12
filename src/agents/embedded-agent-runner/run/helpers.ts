@@ -283,6 +283,27 @@ export function buildErrorAgentMeta(params: {
   };
 }
 
+export function resolveAcceptedFinalCallId(
+  assistant: AssistantMessage | undefined,
+): string | undefined {
+  // The authority is the runtime-stamped `openclawCallId` on the exact
+  // AssistantMessage produced by the accepted terminal model invocation.
+  // Never derive from array position, timing, hook delivery, or model content:
+  // a tool-use/error/aborted message is not an accepted terminal answer, so its
+  // call identity must not leak into finalization as acceptedFinalCallId.
+  if (!assistant || assistant.role !== "assistant") {
+    return undefined;
+  }
+  if (
+    assistant.stopReason === "toolUse" ||
+    assistant.stopReason === "error" ||
+    assistant.stopReason === "aborted"
+  ) {
+    return undefined;
+  }
+  return typeof assistant.openclawCallId === "string" ? assistant.openclawCallId : undefined;
+}
+
 export function resolveFinalAssistantVisibleText(
   lastAssistant: AssistantMessage | undefined,
 ): string | undefined {

@@ -211,6 +211,8 @@ type CompleteEmbeddedAttemptAfterTurnInput = {
     lastCallUsage?: NormalizedUsage;
     promptCache?: PromptCacheInfo;
     beforeAgentFinalizeRevisionReason?: string;
+    /** Runtime-owned callId of the accepted terminal model invocation, when present. */
+    acceptedFinalCallId?: string;
     compactionOccurredThisAttempt: boolean;
   };
   readLifecycleState: () => {
@@ -370,15 +372,21 @@ export async function completeEmbeddedAttemptAfterTurn(
       state.promptError && !lifecycleForAgentEnd.aborted
         ? formatErrorMessage(state.promptError)
         : undefined;
+    const agentEndSuccess = !lifecycleForAgentEnd.aborted && !state.promptError;
     runAgentEndSideEffects({
       event: {
         messages: projectNestedToolActivityForHooks(
           state.messagesSnapshot,
           state.nestedToolActivities ?? [],
         ),
-        success: !lifecycleForAgentEnd.aborted && !state.promptError,
+        success: agentEndSuccess,
         error: agentEndError,
         durationMs: Date.now() - runtime.promptStartedAt,
+        // acceptedFinalCallId is only truthful on a successful terminal answer;
+        // failed/abandoned runs must not fabricate call authority.
+        ...(agentEndSuccess && state.acceptedFinalCallId
+          ? { acceptedFinalCallId: state.acceptedFinalCallId }
+          : {}),
       },
       ctx: buildEmbeddedAgentEndContext({
         run: attempt,

@@ -445,6 +445,8 @@ export type PluginHookAgentEndEvent = {
   success: boolean;
   error?: string;
   durationMs?: number;
+  /** Runtime-owned callId of the accepted terminal model invocation, when one exists. */
+  acceptedFinalCallId?: string;
 };
 
 export type PluginHookBeforeAgentFinalizeEvent = {
@@ -459,6 +461,8 @@ export type PluginHookBeforeAgentFinalizeEvent = {
   stopHookActive: boolean;
   lastAssistantMessage?: string;
   messages?: unknown[];
+  /** Runtime-owned callId of the accepted terminal model invocation. */
+  acceptedFinalCallId?: string;
 };
 
 export type PluginHookBeforeAgentFinalizeResult = {

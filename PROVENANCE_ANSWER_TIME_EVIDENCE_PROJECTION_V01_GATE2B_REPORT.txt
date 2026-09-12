@@ -1,0 +1,321 @@
+PROVENANCE ANSWER-TIME EVIDENCE PROJECTION v0.1
+GATE 2B — ACCEPTED FINAL MODEL CALL AUTHORITY (DEV IMPLEMENTATION + CERTIFICATION)
+===============================================================================
+
+1. REPO / PATH / BRANCH / BASELINE COMMIT
+-----------------------------------------
+Repository path : /home/dev-admin/bruno-dev/OpenClaw/openclaw
+Branch          : codex/bruno-model-routing-observability
+HEAD / baseline : 14f8688cfa31743b995bd7e2dbc818caad292617
+Package version : openclaw 2026.8.2
+git status      : working tree was CLEAN at start (no unrelated tracked
+                  modifications). No existing work was cleaned/reset/deleted.
+
+2. PRE-FIX REPRODUCTION
+-----------------------
+Before this change the model-call diagnostic wrapper returned the provider's
+final `result()` value unchanged:
+
+    function observeModelCallFinalResult<T>(result, lifecycle): T {
+      lifecycle.observer.observeFinalResult(...);
+      lifecycle.emitCompleted();
+      return result;   // <-- exact provider object, no call identity attached
+    }
+
+This was pinned by an existing regression test
+(`attempt.model-diagnostic-events.test.ts`) that asserted `stream.result()`
+was object-identical (`toBe`) to the provider message. The wrapper therefore
+never propagated the runtime-allocated callId onto the AssistantMessage, and
+the finalization path had no accepted-terminal call authority to forward.
+
+When the additive field is introduced, that same `toBe` identity assertion
+fails (observed post-change), which demonstrates the pre-fix behavior: the
+exact AssistantMessage produced by the invocation did NOT carry the runtime
+callId. The new authority tests below assert the desired `openclawCallId`
+value; against the pre-fix wrapper they fail because the field is absent.
+
+3. ROOT CAUSE
+-------------
+OpenClaw allocates the authoritative callId in `createModelLifecycle`
+(`run/attempt.model-diagnostic-lifecycle.ts`) and emits it through
+`model_call_started`/`model_call_ended` diagnostic events, but the callId was
+never attached to the AssistantMessage returned by that same invocation.
+Consequently finalization could only guess authority from the last observed
+diagnostic hook, timing, or array position — all of which are unsafe for
+Provenance.
+
+4. CHOSEN callId OWNERSHIP MECHANISM
+------------------------------------
+Narrowest safe representation: an optional, runtime-owned field on the source
+AssistantMessage type:
+
+    openclawCallId?: string   (packages/llm-core/src/types.ts)
+
+Why this cannot be supplied/forged by model content:
+  - The field is stamped by OpenClaw's diagnostic lifecycle wrapper AFTER the
+    provider returns, from the control-flow-local `lifecycle.eventBase.callId`.
+  - The wrapper overwrites unconditionally (`{ ...result, openclawCallId }`),
+    so any pre-existing value on the provider object is discarded.
+  - Model text/content is never parsed to select the value; there is no code
+    path that reads the value from content, timestamps, routing tier, provider,
+    or prose.
+  - `packages/llm-core` is OpenClaw's own monorepo package
+    (`@openclaw/llm-core`), so this is an OpenClaw-owned metadata mechanism,
+    analogous to the existing runtime-owned `turnId` and `diagnostics` fields.
+  - No generated file was edited (`packages/ai/dist`, `packages/plugin-sdk/dist`,
+    etc. are untouched).
+
+5. EXACT CHANGED FILES (production)
+-----------------------------------
+- packages/llm-core/src/types.ts
+    Add optional `openclawCallId?: string` to AssistantMessage.
+- src/agents/embedded-agent-runner/run/attempt.model-diagnostic-events.ts
+    Stamp `lifecycle.eventBase.callId` onto the assistant result returned by
+    `observeModelCallFinalResult` (after diagnostic observation).
+- src/agents/embedded-agent-runner/run/helpers.ts
+    Add `resolveAcceptedFinalCallId` (terminal-acceptance guard + string check).
+- src/agents/embedded-agent-runner/run/attempt-stream-prepare.ts
+    Derive acceptedFinalCallId from the accepted terminal `lastAssistant` and
+    include it in the before_agent_finalize hook event.
+- src/agents/embedded-agent-runner/run/attempt-settle.ts
+    Derive acceptedFinalCallId from the settled terminal assistant and pass it
+    into the after-turn state.
+- src/agents/embedded-agent-runner/run/attempt-finalize.ts
+    Accept `state.acceptedFinalCallId` and add it to the agent_end event only
+    when the run is successful (no fabrication on failed/abandoned runs).
+- src/plugins/hook-types.ts
+    Add `acceptedFinalCallId?: string` to PluginHookBeforeAgentFinalizeEvent
+    and PluginHookAgentEndEvent.
+
+Tests (also new/changed; enumerated in section 7). Production files are the
+first seven entries; the rest are test-only changes.
+
+6. EXACT PROPAGATION PATH
+-------------------------
+  runtime allocates callId
+      (createModelLifecycle -> ctx.nextCallId(), eventBase.callId)
+        |
+  wrapStreamFnWithDiagnosticModelCallEvents -> observeModelCallFinalResult
+      stamps openclawCallId = callId on the exact AssistantMessage returned
+      by that invocation's stream.result()
+        |
+  agent-core agent loop (streamAssistantResponse.finalizeAssistantMessage)
+      preserves openclawCallId through removeNonExecutableToolCalls /
+      ensureToolTurnIdentity / withAssistantTurnTaint spreads, emits the
+      accepted terminal message as message_end
+        |
+  subscribe layer noteLastAssistant -> state.lastAssistant (exact message)
+        |
+  handleAgentEnd -> runBeforeTerminalDelivery -> onBeforeTerminalDelivery
+      event.lastAssistant carries openclawCallId
+        |
+  attempt-stream-prepare.ts onBeforeTerminalDelivery
+      acceptedFinalCallId = resolveAcceptedFinalCallId(lastAssistant)
+        |
+  runAgentHarnessBeforeAgentFinalizeHook event.acceptedFinalCallId
+        |
+  hookRunner.runBeforeAgentFinalize receives acceptedFinalCallId
+        |
+  (agent_end, when lifecycle-safe)
+      attempt-settle.ts computes acceptedFinalCallId from the settled
+      terminal assistant -> state.acceptedFinalCallId
+        |
+      attempt-finalize.ts adds it to the agent_end event only on success.
+
+7. TESTS ADDED
+--------------
+A. src/agents/embedded-agent-runner/run/attempt.model-diagnostic-call-authority.test.ts
+   - single terminal call -> result.openclawCallId === call_1 (Gate A)
+   - model-supplied openclawCallId overwritten by runtime value (Gate E)
+   - stale/historical openclawCallId cannot become authority for a NEW
+     invocation (historical/stale analysis)
+   - started/completed diagnostic callId identical to message callId (Gate G)
+   - non-assistant results receive no call identity (boundary)
+
+B. packages/agent-core/src/agent-loop-call-authority.test.ts
+   - accepted terminal message preserves call_1 (Gate A)
+   - tool cycle: call_1 toolUse predecessor never authoritative; call_2
+     terminal answer is authoritative (Gate B + C)
+   - failed stream produces no fabricated callId (Gate D)
+
+C. src/agents/embedded-agent-runner/run/helpers.test.ts
+   - resolveAcceptedFinalCallId unit matrix: stop/length accepted,
+     toolUse/error/aborted/undefined/non-string rejected (Gate D)
+
+D. src/agents/embedded-agent-runner/run/attempt-stream-prepare.test.ts
+   - before_agent_finalize receives acceptedFinalCallId (Gate F additive)
+   - acceptedFinalCallId omitted when no runtime identity exists (Gate F)
+   - revision settlement path receives acceptedFinalCallId=call_1 and
+     returns revise through the real onBeforeTerminalDelivery mechanism
+
+E. src/agents/embedded-agent-runner/run/attempt-phase-lifecycle.test.ts
+   - agent_end receives the revised execution's call_2 (not superseded call_1)
+     on success
+   - agent_end omits acceptedFinalCallId on failure (Gate D)
+
+F. src/agents/embedded-agent-runner/run/attempt.model-diagnostic-events.test.ts
+   - updated the pre-existing result-identity assertion to the additive
+     openclawCallId contract (documented behavior change).
+
+G. src/agents/embedded-agent-runner/run.before-agent-finalize.test-support.ts
+   - "supersedes call_1 through the real revision loop and accepts call_2 as
+     final authority": drives the real runEmbeddedAgent revision/retry loop.
+     Attempt 1 carries openclawCallId=call_1 plus beforeAgentFinalizeRevisionReason;
+     the real terminal-resolution path retries; attempt 2 carries call_2 and is
+     accepted. Asserts two attempts, call_1 superseded, call_2 final.
+H. src/agents/embedded-agent-runner/run/terminal-resolution.test.ts
+   - "supersedes a before-finalize candidate carrying call_1 and requests a
+     revised pass": real resolveEmbeddedRunTerminal rejects the call_1
+     candidate (returns retry), increments beforeFinalizeRevisionAttempts, and
+     activates the revision continuation prompt.
+
+8. EXACT TEST RESULTS
+---------------------
+Targeted vitest runs (all PASS):
+  attempt.model-diagnostic-events.test.ts        9 passed
+  attempt.model-diagnostic-call-authority.test.ts 5 passed (new)
+  attempt.model-diagnostic-observation.test.ts
+    + attempt.model-diagnostic-lifecycle.test.ts  30 passed
+  attempt-stream-prepare.test.ts                 16 passed
+  attempt-phase-lifecycle.test.ts                12 passed
+  attempt-stream-settle.test.ts                  7 passed
+  terminal-resolution.test.ts                    44 passed
+  helpers.test.ts                                30 passed
+  agent-loop.test.ts                             76 passed
+  agent-loop-call-authority.test.ts              4 passed (new)
+  agent-session-code-mode-source.test.ts         22 passed
+  run.shared-integration.test.ts                 102 passed
+      (includes runEmbeddedAgent before_agent_finalize + the new call_1 ->
+       revise -> call_2 revision/supersession regression)
+
+Routing non-regression (all PASS):
+  openai-routing.test.ts + bruno-model-routing.test.ts   52 passed
+  model-routing-decision.test.ts + bruno-routing-capability.test.ts 10 passed
+  get-reply.bruno-model-routing.test.ts                  8 passed
+
+Typecheck:
+  tsgo core (tsconfig.core.json)                  exit 0
+
+Note: a single-process run of the entire `agents-embedded-agent-run` shard
+was attempted and hit a late `Worker exited unexpectedly` in
+`prompt-failure.test.ts`. The same file passes in isolation, and every touched
+production path plus its tests pass individually. The shard-wide worker exit
+is a resource/worker-lifetime issue in this environment, not a test failure
+attributable to this change.
+
+9. FIRE-AND-FORGET INDEPENDENCE EVIDENCE
+---------------------------------------
+The authoritative association is synchronous and control-flow-local:
+
+  - `createModelLifecycle` allocates `callId` synchronously before invoking the
+    provider stream function.
+  - `withOpenClawModelCallIdentity` is called directly by
+    `observeModelCallFinalResult` when `stream.result()` resolves — it reads
+    `lifecycle.eventBase.callId` from the same closed-over lifecycle object.
+  - No state is shared with the async `model_call_started`/`model_call_ended`
+    hook dispatch (`fireAndForgetBoundedHook`). Those hooks are observational;
+    they cannot affect the stamped value.
+  - Gate G test proves started/completed hook callId and the assistant
+    `openclawCallId` agree, but agreement is a consequence of one source of
+    truth, not a dependency on hook delivery ordering.
+
+10. ROUTING / PROVIDER NON-REGRESSION
+-------------------------------------
+No provider, routing, classifier, fallback, override, or LLM-tier code was
+touched. Verification:
+  - openai-routing.test.ts: provider selection + explicit runtime policy paths.
+  - bruno-model-routing.test.ts: DEV gate, fail-closed, selected/fallback route.
+  - model-routing-decision.test.ts: admission authority.
+  - bruno-routing-capability.test.ts: trusted capability derivation.
+  - get-reply.bruno-model-routing.test.ts: semantic LOW/MEDIUM/HIGH-style
+    routing, fallback, legacy override, fail-closed.
+All pass. tsgo core typecheck passes for the whole production graph.
+
+11. SECURITY / FORGERY ANALYSIS
+-------------------------------
+  - Model text/content cannot select the callId: the value is never parsed
+    from content.
+  - Provider payloads cannot forge it: the wrapper overwrites any
+    pre-existing `openclawCallId` on the result object.
+  - Timing/array position/hook ordering are not used as authority.
+  - `resolveAcceptedFinalCallId` rejects toolUse/error/aborted/non-string
+    values, so a predecessor tool call or a failed stream cannot leak its
+    callId into acceptedFinalCallId.
+  - agent_end only exposes acceptedFinalCallId on a successful terminal run.
+
+11B. REVISION/SUPERSESSION LIFECYCLE CLOSURE (certification gap)
+----------------------------------------------------------------
+Exact new test (primary):
+  src/agents/embedded-agent-runner/run.before-agent-finalize.test-support.ts
+  -> "supersedes call_1 through the real revision loop and accepts call_2 as
+     final authority" (executed via run.shared-integration.test.ts).
+
+Actual call_1 -> revise -> call_2 trajectory exercised:
+  1. Model call_1 produces a terminal-looking AssistantMessage carrying
+     openclawCallId=call_1 (attempt 1 result.lastAssistant).
+  2. The attempt boundary records beforeAgentFinalizeRevisionReason; the REAL
+     run-loop calls the REAL resolveEmbeddedRunTerminal, which rejects this
+     candidate and returns action="retry" with the revision continuation
+     prompt. (The terminal-resolution test above also pins this branch
+     directly, with openclawCallId=call_1 on the rejected candidate.)
+  3. The REAL revision loop launches a second model invocation. Attempt 2's
+     lastAssistant carries openclawCallId=call_2.
+  4. Attempt 2 completes with no revision reason, so it is the accepted final
+     execution authority.
+  5. The test asserts exactly two attempts, acceptedCallIds ===
+     ["call_1","call_2"], and acceptedCallIds[1] !== "call_1".
+
+Why call_1 cannot remain final authority:
+  - attempt 1 is marked with beforeAgentFinalizeRevisionReason; the real
+    terminal-resolution path returns retry, so the orchestrator never returns
+    attempt 1 as the final result.
+  - The only attempt without a revision reason is attempt 2 (call_2), which is
+    the one the loop accepts.
+  - At the attempt boundary, the real onBeforeTerminalDelivery stamps and
+    forwards call_1 only into the revision decision (attempt-stream-prepare
+    test asserts acceptedFinalCallId=call_1 for the revise decision); the
+    superseded candidate's delivery is suppressed.
+  - The agent_end test asserts the completed revised execution forwards
+    call_2, not the superseded call_1.
+
+Final agent_end acceptedFinalCallId:
+  - attempt-phase-lifecycle.test.ts:
+    "forwards the revised execution's call_2, not the superseded call_1, to a
+     successful agent_end event" -> event.acceptedFinalCallId === "call_2".
+
+Historical/stale openclawCallId analysis:
+  - attempt.model-diagnostic-call-authority.test.ts:
+    "never lets a stale historical callId become the authority for a new
+     invocation". A replayed/persisted assistant message carrying call_0 is
+     passed through a NEW invocation; the runtime wrapper overwrites it with
+     the freshly allocated call_2, so stale/historical identity never becomes
+     the new authority.
+  - The same guarantee is structural: resolveAcceptedFinalCallId reads only
+    the openclawCallId stamped by the runtime wrapper on the exact message
+    produced by the accepted terminal invocation; no code path reads a
+    historical message field as acceptedFinalCallId.
+
+12. REMAINING BLOCKERS
+----------------------
+None for Gate 2B. Out-of-scope items (per the Gate 2B brief) were not
+implemented: evidenceId generation, usedEvidenceIds, evidence visibility maps,
+source attribution, provenance consumption, provider-native structured output,
+Knowledge Flow, Bruno Provenance, Bruno Brain, routing/classifier/LLM-tier
+changes. The native hook relay path does not yet populate the new optional
+field (it remains undefined there); the authoritative embedded path is covered.
+
+13. GATE 2B VERDICT
+-------------------
+PASS. Accepted-final-call authority is now derived strictly from the runtime
+callId attached to the exact AssistantMessage produced by the accepted
+terminal model invocation, and before_agent_finalize receives
+acceptedFinalCallId. agent_end receives it only when lifecycle-safe.
+
+14. NO COMMIT / NO PUSH / NO PROD CONFIRMATION
+----------------------------------------------
+CONFIRMED:
+  - Nothing was committed.
+  - Nothing was pushed.
+  - PROD (bruno-dev/runtime/openclaw-prod-deploy and any production state)
+    was NOT accessed or modified.
+  - No unrelated tracked modifications were cleaned/reset/deleted.

@@ -406,6 +406,39 @@ describe("terminal resolution", () => {
     expect(armPostCompactionGuard).toHaveBeenCalledTimes(1);
   });
 
+  it("supersedes a before-finalize candidate carrying call_1 and requests a revised pass", async () => {
+    // The accepted-terminal candidate was produced by model invocation call_1,
+    // but before_agent_finalize returned revise. Terminal resolution must reject
+    // this candidate and request one more model pass; call_1 is not final.
+    const assistant = buildEmbeddedRunnerAssistant({
+      content: [{ type: "text", text: "First answer." }],
+      openclawCallId: "call_1",
+    });
+    const attempt = makeEmbeddedRunnerAttempt({
+      assistantTexts: ["First answer."],
+      lastAssistant: assistant,
+      currentAttemptAssistant: assistant,
+      beforeAgentFinalizeRevisionReason: "Tighten the final wording.",
+      currentAttemptReplayMetadata: { hadPotentialSideEffects: false, replaySafe: true },
+    });
+    const activateInternalPrompt = vi.fn();
+    const retryState = createEmbeddedRunTerminalRetryState();
+    const input = makeTerminalInput({
+      attempt,
+      attemptAssistant: assistant,
+      retryState,
+      activateInternalPrompt,
+      finalAssistantVisibleText: "First answer.",
+      finalAssistantRawText: "First answer.",
+    });
+
+    await expect(resolveEmbeddedRunTerminal(input)).resolves.toEqual({ action: "retry" });
+    expect(retryState.beforeFinalizeRevisionAttempts).toBe(1);
+    expect(activateInternalPrompt).toHaveBeenCalledWith(
+      expect.stringContaining("Tighten the final wording."),
+    );
+  });
+
   it("completes an explicit silent reply without retrying", async () => {
     const assistant = buildEmbeddedRunnerAssistant({
       content: [{ type: "text", text: SILENT_REPLY_TOKEN }],

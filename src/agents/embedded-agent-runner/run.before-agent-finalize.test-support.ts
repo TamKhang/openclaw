@@ -101,6 +101,58 @@ describe("runEmbeddedAgent before_agent_finalize", () => {
     expect(attemptCall(1).suppressNextUserMessagePersistence).toBe(true);
   });
 
+  it("supersedes call_1 through the real revision loop and accepts call_2 as final authority", async () => {
+    // The first attempt produces a terminal-looking assistant carrying call_1,
+    // but the before_agent_finalize revision decision supersedes it. The real
+    // terminal-resolution path must retry, and only the second invocation's
+    // call_2 may become the accepted final authority.
+    const acceptedCallIds: Array<string | undefined> = [];
+    mockedRunEmbeddedAttempt
+      .mockImplementationOnce(async () => {
+        const attempt = finalAnswerAttempt("First answer.", {
+          beforeAgentFinalizeRevisionReason:
+            "Tighten the final wording.\n\nMention the validated behavior.",
+          lastAssistant: {
+            stopReason: "stop",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [{ type: "text", text: "First answer." }],
+            openclawCallId: "call_1",
+          } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+        });
+        acceptedCallIds.push(attempt.lastAssistant?.openclawCallId);
+        return attempt;
+      })
+      .mockImplementationOnce(async () => {
+        const attempt = finalAnswerAttempt("Revised answer.", {
+          lastAssistant: {
+            stopReason: "stop",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [{ type: "text", text: "Revised answer." }],
+            openclawCallId: "call_2",
+          } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+        });
+        acceptedCallIds.push(attempt.lastAssistant?.openclawCallId);
+        return attempt;
+      });
+
+    await runEmbeddedAgent({
+      ...createOverflowRunParams(state),
+      provider: "openai",
+      model: "gpt-5.5",
+      runId: "run-before-finalize-call-authority",
+    });
+
+    // The real revision loop runs two attempts: call_1 is superseded, call_2 is accepted.
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(acceptedCallIds).toEqual(["call_1", "call_2"]);
+    expect(attemptCall(1).prompt).toContain("Tighten the final wording.");
+    expect(attemptCall(1).prompt).not.toContain("First answer.");
+    // call_1 must never be the accepted final authority.
+    expect(acceptedCallIds[1]).not.toBe("call_1");
+  });
+
   it("replaces an incomplete-turn continuation with a finalize revision", async () => {
     mockedRunEmbeddedAttempt
       .mockResolvedValueOnce(

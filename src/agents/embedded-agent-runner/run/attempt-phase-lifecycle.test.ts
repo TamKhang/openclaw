@@ -551,6 +551,105 @@ describe("embedded attempt phase lifecycle state", () => {
     );
   });
 
+  it("forwards the revised execution's call_2, not the superseded call_1, to a successful agent_end event", async () => {
+    // The completed revised execution is the second model invocation; its
+    // acceptedFinalCallId is call_2. The superseded call_1 candidate never
+    // reaches agent_end.
+    await completeEmbeddedAttemptAfterTurn({
+      attempt: {
+        runId: "run-1",
+        sessionId: "session-1",
+        sessionFile: "/tmp/session.jsonl",
+      } as never,
+      activeSession: {} as never,
+      sessionManager: { appendCustomEntry: vi.fn() } as never,
+      withOwnedTranscriptWrite: async (operation) => await operation(),
+      state: {
+        promptError: null,
+        yieldAborted: false,
+        sessionIdUsed: "session-1",
+        messagesSnapshot: [],
+        prePromptMessageCount: 0,
+        contextEngineAfterTurnCheckpoint: null,
+        compactionOccurredThisAttempt: false,
+        acceptedFinalCallId: "call_2",
+      },
+      readLifecycleState: () => ({
+        aborted: false,
+        timedOut: false,
+        idleTimedOut: false,
+        timedOutDuringCompaction: false,
+      }),
+      runtime: {
+        effectiveWorkspace: "/tmp/workspace",
+        agentDir: "/tmp/agent",
+        sessionAgentId: "main",
+        resolveActiveContextEnginePluginId: () => undefined,
+        shouldRecordCompletedBootstrapTurn: false,
+        cacheTrace: null,
+        anthropicPayloadLogger: null,
+        hookAgentId: "main",
+        diagnosticTrace: { traceId: "trace-1", spanId: "span-1" } as never,
+        skillWorkshopAvailable: false,
+        hookRunner: null,
+        promptStartedAt: Date.now(),
+      },
+    });
+
+    expect(hoisted.runAgentEndSideEffects).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ success: true, acceptedFinalCallId: "call_2" }),
+      }),
+    );
+  });
+
+  it("does not fabricate acceptedFinalCallId on a failed agent_end event", async () => {
+    await completeEmbeddedAttemptAfterTurn({
+      attempt: {
+        runId: "run-1",
+        sessionId: "session-1",
+        sessionFile: "/tmp/session.jsonl",
+      } as never,
+      activeSession: {} as never,
+      sessionManager: { appendCustomEntry: vi.fn() } as never,
+      withOwnedTranscriptWrite: async (operation) => await operation(),
+      state: {
+        promptError: new Error("provider exploded"),
+        yieldAborted: false,
+        sessionIdUsed: "session-1",
+        messagesSnapshot: [],
+        prePromptMessageCount: 0,
+        contextEngineAfterTurnCheckpoint: null,
+        compactionOccurredThisAttempt: false,
+        acceptedFinalCallId: "call_2",
+      },
+      readLifecycleState: () => ({
+        aborted: false,
+        timedOut: false,
+        idleTimedOut: false,
+        timedOutDuringCompaction: false,
+      }),
+      runtime: {
+        effectiveWorkspace: "/tmp/workspace",
+        agentDir: "/tmp/agent",
+        sessionAgentId: "main",
+        resolveActiveContextEnginePluginId: () => undefined,
+        shouldRecordCompletedBootstrapTurn: false,
+        cacheTrace: null,
+        anthropicPayloadLogger: null,
+        hookAgentId: "main",
+        diagnosticTrace: { traceId: "trace-1", spanId: "span-1" } as never,
+        skillWorkshopAvailable: false,
+        hookRunner: null,
+        promptStartedAt: Date.now(),
+      },
+    });
+
+    const event = hoisted.runAgentEndSideEffects.mock.calls[0]?.[0]?.event;
+    expect(event).toMatchObject({ success: false });
+    expect(event?.acceptedFinalCallId).toBeUndefined();
+  });
+
   it("skips agent_end side effects for settled-turn finalization", async () => {
     await completeEmbeddedAttemptAfterTurn({
       attempt: {

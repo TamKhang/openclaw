@@ -11,7 +11,6 @@ import {
   freezeDiagnosticTraceContext,
   type DiagnosticTraceContext,
 } from "../../../infra/diagnostic-trace-context.js";
-import type { AssistantMessage } from "../../../llm/types.js";
 import {
   closeDiagnosticEmbeddedRunOwner,
   type DiagnosticEmbeddedRunOwner,
@@ -76,6 +75,7 @@ import {
   type EmbeddedAttemptDeferredLifecycleOwner,
 } from "./deferred-lifecycle-owner.js";
 import {
+  resolveAcceptedFinalCallId,
   resolveFinalAssistantRawText,
   resolveFinalAssistantVisibleText,
   resolveReportedModelRef,
@@ -162,7 +162,9 @@ export function prepareEmbeddedAttemptStream(input: {
         ) {
           return;
         }
-        const lastAssistant = event.lastAssistant as AssistantMessage | undefined;
+        const lastAssistant =
+          event.lastAssistant?.role === "assistant" ? event.lastAssistant : undefined;
+        const acceptedFinalCallId = resolveAcceptedFinalCallId(lastAssistant);
         const lastAssistantMessage =
           normalizeOptionalString(resolveFinalAssistantVisibleText(lastAssistant)) ??
           normalizeOptionalString(resolveFinalAssistantRawText(lastAssistant)) ??
@@ -232,6 +234,7 @@ export function prepareEmbeddedAttemptStream(input: {
               stopHookActive: false,
               lastAssistantMessage,
               messages: hookMessages,
+              ...(acceptedFinalCallId ? { acceptedFinalCallId } : {}),
             },
             ctx: {
               runId: attempt.runId,

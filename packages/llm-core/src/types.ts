@@ -381,6 +381,16 @@ export interface AssistantMessage {
   responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
   providerReplay?: ProviderReplayState; // Opaque provider state carried into a compatible later request.
   turnId?: string; // Runtime-assigned stable turn identity when the provider does not expose one
+  /**
+   * Runtime-owned diagnostic call identity for the exact model invocation that
+   * produced this assistant message. The value is stamped by OpenClaw's model
+   * call lifecycle wrapper after the provider returns; it is never sourced from
+   * model content, provider payloads, or persisted transcript data. Consumers
+   * must treat this field as authority-adjacent diagnostic metadata, not as
+   * user/provenance evidence, and must not let model-generated text select or
+   * override it.
+   */
+  openclawCallId?: string;
   diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
   usage: Usage;
   stopReason: StopReason;

@@ -39,6 +39,7 @@ import { settleEmbeddedAttemptStream } from "./attempt-stream-settle.js";
 import type { installEmbeddedAttemptStreamGuards } from "./attempt-stream.js";
 import type { prepareEmbeddedAttemptTimeout } from "./attempt-timeout-prepare.js";
 import type { EmbeddedAttemptDeferredLifecycleOwner } from "./deferred-lifecycle-owner.js";
+import { resolveAcceptedFinalCallId } from "./helpers.js";
 import { buildPromptImageFailureNotice } from "./images.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 
@@ -499,6 +500,7 @@ export async function runEmbeddedAttemptSettledPhase(
     attemptUsage = settledStream.attemptUsage;
     cacheBreak = settledStream.cacheBreak;
     sessionRuntimeState.promptCache = settledStream.promptCache;
+    const acceptedFinalCallId = resolveAcceptedFinalCallId(settledStream.lastAssistant);
 
     const afterTurn = await completeEmbeddedAttemptAfterTurn({
       attempt,
@@ -543,6 +545,7 @@ export async function runEmbeddedAttemptSettledPhase(
         lastCallUsage: settledStream.lastCallUsage,
         promptCache: settledStream.promptCache,
         ...(beforeAgentFinalizeRevisionReason ? { beforeAgentFinalizeRevisionReason } : {}),
+        ...(acceptedFinalCallId ? { acceptedFinalCallId } : {}),
         compactionOccurredThisAttempt: settledStream.compactionOccurredThisAttempt,
       },
     });

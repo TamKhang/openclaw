@@ -362,7 +362,9 @@ describe("wrapStreamFnWithDiagnosticModelCallEvents stream proxy", () => {
         } as never,
         {},
       ) as unknown as typeof originalStream;
-      expect(await streamResult.result()).toBe(assistant);
+      const streamed = await streamResult.result();
+      expect(streamed).toMatchObject(assistant);
+      expect(streamed).toMatchObject({ openclawCallId: "call-result-only" });
     });
 
     expect(originalStream.result).toHaveBeenCalledOnce();

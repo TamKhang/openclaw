@@ -99,10 +99,21 @@ async function* observeModelCallIterator<T>(
   }
 }
 
+function withOpenClawModelCallIdentity<T>(result: T, callId: string): T {
+  // The runtime call identity is attached after observation so diagnostic
+  // content capture and byte accounting observe the provider's exact output.
+  // Overwriting unconditionally guarantees the model cannot pre-seed or forge
+  // its own authoritative callId through assistant-message content or fields.
+  if (isRecord(result) && result.role === "assistant") {
+    return { ...result, openclawCallId: callId } as T;
+  }
+  return result;
+}
+
 function observeModelCallFinalResult<T>(result: T, lifecycle: ModelCallLifecycle): T {
   lifecycle.observer.observeFinalResult(lifecycle.eventBase, lifecycle.startedAt, result);
   lifecycle.emitCompleted();
-  return result;
+  return withOpenClawModelCallIdentity(result, lifecycle.eventBase.callId);
 }
 
 function createObservedResultFunction(

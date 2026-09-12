@@ -266,6 +266,7 @@ describe("prepareEmbeddedAttemptStream", () => {
         role: "assistant",
         content: [{ type: "text", text: "Draft answer" }],
         stopReason: "stop",
+        openclawCallId: "call_1",
       },
       assistantTexts: ["Draft answer"],
       hasAssistantVisibleText: true,
@@ -275,6 +276,10 @@ describe("prepareEmbeddedAttemptStream", () => {
     });
 
     await vi.waitFor(() => expect(mocks.runBeforeFinalizeHook).toHaveBeenCalledOnce());
+    const revisionHookParams = mocks.runBeforeFinalizeHook.mock.calls[0]?.[0] as {
+      event?: { acceptedFinalCallId?: string };
+    };
+    expect(revisionHookParams?.event?.acceptedFinalCallId).toBe("call_1");
     expect(prepared.queueHandle.isStopped?.()).toBe(true);
     await expect(prepared.queueHandle.queueMessage("too late")).rejects.toThrow(
       "active session is finalizing",
@@ -284,6 +289,139 @@ describe("prepareEmbeddedAttemptStream", () => {
     await expect(decision).resolves.toEqual({ suppressTerminalDelivery: true });
     expect(prepared.getBeforeAgentFinalizeRevisionEntryId()).toBe("canonical-entry-id");
     expect(prepared.queueHandle.isStopped?.()).toBe(true);
+  });
+
+  it("forwards the accepted terminal callId to before_agent_finalize", async () => {
+    mocks.runBeforeFinalizeHook.mockResolvedValue({ action: "continue" });
+    prepareEmbeddedAttemptStream({
+      attempt: {
+        runId: "run-finalize-call-id",
+        sessionId: "session-finalize-call-id",
+        sessionKey: "agent:main:main",
+        maxBeforeAgentFinalizeRevisions: 0,
+        beforeAgentFinalizeRevisionAttempts: 0,
+      } as never,
+      activeSession: {
+        agent: { hasQueuedMessages: () => false },
+        isStreaming: false,
+        messages: [],
+        pendingMessageCount: 0,
+      } as never,
+      hookRunner: { hasHooks: (name: string) => name === "before_agent_finalize" } as never,
+      hookAgentId: "main",
+      diagnosticTrace: {} as never,
+      diagnosticOwner: {} as never,
+      clientToolCallSlots: [],
+      nestedToolActivities: [],
+      isReplaySafeTool: () => false,
+      runAbortController: new AbortController(),
+      abortRun: vi.fn(),
+      markExternalAbort: vi.fn(),
+      getRunState: () => ({
+        aborted: false,
+        promptError: undefined,
+        timedOut: false,
+        yieldDetected: false,
+      }),
+      hasDeliveredSourceReply: () => false,
+      markSourceReplyDelivered: vi.fn(),
+      onBlockReply: vi.fn(),
+      onBlockReplyFlush: vi.fn(),
+      sandboxSessionKey: "agent:main:main",
+      builtinToolNames: new Set(),
+      replaySafeToolNames: new Set(),
+    });
+    const subscriptionInput = mocks.subscribe.mock.calls.at(-1)?.[0] as {
+      onBeforeTerminalDelivery?: (event: unknown) => Promise<unknown>;
+    };
+    await subscriptionInput.onBeforeTerminalDelivery?.({
+      messages: [],
+      willRetry: false,
+      assistantEntryId: "canonical-entry-id",
+      lastAssistant: {
+        role: "assistant",
+        content: [{ type: "text", text: "Draft answer" }],
+        stopReason: "stop",
+        openclawCallId: "call_1",
+      },
+      assistantTexts: ["Draft answer"],
+      hasAssistantVisibleText: true,
+      isError: false,
+      incompleteTerminalAssistant: false,
+      hadDeterministicSideEffect: false,
+    });
+
+    await vi.waitFor(() => expect(mocks.runBeforeFinalizeHook).toHaveBeenCalledOnce());
+    const hookParams = mocks.runBeforeFinalizeHook.mock.calls[0]?.[0] as {
+      event?: { acceptedFinalCallId?: string };
+    };
+    expect(hookParams?.event?.acceptedFinalCallId).toBe("call_1");
+  });
+
+  it("omits acceptedFinalCallId when the terminal assistant carries no runtime call identity", async () => {
+    mocks.runBeforeFinalizeHook.mockResolvedValue({ action: "continue" });
+    prepareEmbeddedAttemptStream({
+      attempt: {
+        runId: "run-finalize-no-call-id",
+        sessionId: "session-finalize-no-call-id",
+        sessionKey: "agent:main:main",
+        maxBeforeAgentFinalizeRevisions: 0,
+        beforeAgentFinalizeRevisionAttempts: 0,
+      } as never,
+      activeSession: {
+        agent: { hasQueuedMessages: () => false },
+        isStreaming: false,
+        messages: [],
+        pendingMessageCount: 0,
+      } as never,
+      hookRunner: { hasHooks: (name: string) => name === "before_agent_finalize" } as never,
+      hookAgentId: "main",
+      diagnosticTrace: {} as never,
+      diagnosticOwner: {} as never,
+      clientToolCallSlots: [],
+      nestedToolActivities: [],
+      isReplaySafeTool: () => false,
+      runAbortController: new AbortController(),
+      abortRun: vi.fn(),
+      markExternalAbort: vi.fn(),
+      getRunState: () => ({
+        aborted: false,
+        promptError: undefined,
+        timedOut: false,
+        yieldDetected: false,
+      }),
+      hasDeliveredSourceReply: () => false,
+      markSourceReplyDelivered: vi.fn(),
+      onBlockReply: vi.fn(),
+      onBlockReplyFlush: vi.fn(),
+      sandboxSessionKey: "agent:main:main",
+      builtinToolNames: new Set(),
+      replaySafeToolNames: new Set(),
+    });
+    const subscriptionInput = mocks.subscribe.mock.calls.at(-1)?.[0] as {
+      onBeforeTerminalDelivery?: (event: unknown) => Promise<unknown>;
+    };
+    await subscriptionInput.onBeforeTerminalDelivery?.({
+      messages: [],
+      willRetry: false,
+      assistantEntryId: "canonical-entry-id",
+      lastAssistant: {
+        role: "assistant",
+        content: [{ type: "text", text: "Draft answer" }],
+        stopReason: "stop",
+      },
+      assistantTexts: ["Draft answer"],
+      hasAssistantVisibleText: true,
+      isError: false,
+      incompleteTerminalAssistant: false,
+      hadDeterministicSideEffect: false,
+    });
+
+    await vi.waitFor(() => expect(mocks.runBeforeFinalizeHook).toHaveBeenCalledOnce());
+    const hookParams = mocks.runBeforeFinalizeHook.mock.calls[0]?.[0] as {
+      event?: { acceptedFinalCallId?: string };
+    };
+    expect(hookParams?.event?.acceptedFinalCallId).toBeUndefined();
   });
 
   it("keeps already-started steering authoritative over finalization", async () => {

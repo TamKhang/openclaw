@@ -7,6 +7,7 @@ import { createUsageAccumulator, mergeUsageIntoAccumulator } from "../usage-accu
 import {
   buildUsageAgentMetaFields,
   buildErrorAgentMeta,
+  resolveAcceptedFinalCallId,
   resolveEmbeddedAttemptBasePrompt,
   resolveFinalAssistantRawText,
   resolveFinalAssistantVisibleText,
@@ -114,6 +115,49 @@ describe("resolveFinalAssistantVisibleText", () => {
     ]);
 
     expect(resolveFinalAssistantRawText(lastAssistant)).toBe("<final>keep this</final>");
+  });
+});
+
+describe("resolveAcceptedFinalCallId", () => {
+  it("returns the runtime callId for an accepted terminal answer", () => {
+    const assistant = {
+      ...makeAssistantMessage([{ type: "text", text: "ok" }]),
+      openclawCallId: "call_1",
+    };
+    expect(resolveAcceptedFinalCallId(assistant)).toBe("call_1");
+  });
+
+  it("treats a length-stopped partial answer as terminal-accepted", () => {
+    const assistant = {
+      ...makeAssistantMessage([{ type: "text", text: "partial" }]),
+      stopReason: "length" as const,
+      openclawCallId: "call_2",
+    };
+    expect(resolveAcceptedFinalCallId(assistant)).toBe("call_2");
+  });
+
+  it.each(["toolUse", "error", "aborted"] as const)(
+    "never promotes a %s predecessor to accepted-final authority",
+    (stopReason) => {
+      const assistant = {
+        ...makeAssistantMessage([{ type: "text", text: "not terminal" }]),
+        stopReason,
+        openclawCallId: "call_predecessor",
+      };
+      expect(resolveAcceptedFinalCallId(assistant)).toBeUndefined();
+    },
+  );
+
+  it("returns undefined when no accepted assistant exists", () => {
+    expect(resolveAcceptedFinalCallId(undefined)).toBeUndefined();
+  });
+
+  it("ignores non-string call identities", () => {
+    const assistant = {
+      ...makeAssistantMessage([{ type: "text", text: "ok" }]),
+      openclawCallId: 12345 as unknown as string,
+    };
+    expect(resolveAcceptedFinalCallId(assistant)).toBeUndefined();
   });
 });
 
