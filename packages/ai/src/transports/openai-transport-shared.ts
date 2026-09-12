@@ -2,6 +2,7 @@ import type {
   AssistantMessage,
   Model,
   OpenAICompletionsCompat,
+  OpenClawProvenanceContent,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -197,7 +198,7 @@ export type OpenAIModeModel = Omit<Model, "compat"> & {
 type MutableToolCall = ToolCall & { partialArgs?: string };
 
 export type MutableAssistantOutput = Omit<AssistantMessage, "content" | "usage"> & {
-  content: Array<TextContent | ThinkingContent | MutableToolCall>;
+  content: Array<TextContent | ThinkingContent | MutableToolCall | OpenClawProvenanceContent>;
   usage: Usage & {
     reasoningTokens?: number;
   };

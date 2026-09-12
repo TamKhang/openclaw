@@ -52,6 +52,7 @@ import {
   extractThinkingFromTaggedStream,
   sanitizeAssistantVisibleStreamText,
 } from "./embedded-agent-utils.js";
+import { extractFinalEvidenceProjection } from "./provenance/answer-evidence.js";
 import type { AgentEvent, AgentMessage } from "./runtime/index.js";
 
 const REASONING_TAG_RE = /<\s*\/?\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|antthinking)\b/i;
@@ -173,13 +174,6 @@ export function handleMessageUpdate(
     content,
   }));
 
-  const chunk = resolveAssistantTextChunk({
-    evtType,
-    delta,
-    content,
-    accumulatedText: ctx.state.deltaBuffer,
-  });
-
   const partialAssistant = eventAssistantMessage;
   const streamContentIndex = resolveAssistantStreamContentIndex(assistantRecord?.contentIndex);
   const streamItemId = resolveAssistantStreamItemId({
@@ -244,6 +238,19 @@ export function handleMessageUpdate(
   if (evtType === "text_start" && isResponsesApiAssistantMessage(partialAssistant)) {
     return;
   }
+  const rawChunk = resolveAssistantTextChunk({
+    evtType,
+    delta,
+    content,
+    accumulatedText: ctx.state.deltaBuffer,
+  });
+  // Stateful answer-evidence sentinel suppression: the certified grammar must
+  // never reach user-facing streaming, so every delta passes through the same
+  // scanner used at final-result extraction. Runs after the streamItemChanged
+  // reset and the Responses text_start replay skip so each byte is scanned once.
+  const chunk = ctx.state.partialEvidenceScanner.push(rawChunk, {
+    final: evtType === "text_end",
+  });
   if (deliveryPhase === "commentary") {
     const isResponsesCommentary = isResponsesApiAssistantMessage(partialAssistant);
     const hadResponsesCommentaryText = isResponsesCommentary && Boolean(ctx.state.deltaBuffer);
@@ -311,7 +318,9 @@ export function handleMessageUpdate(
   const shouldReadScopedPartialText =
     streamItemChanged || (shouldUsePhaseAwareBlockReply && (evtType === "text_end" || !chunk));
   let next = shouldReadScopedPartialText
-    ? coerceChatContentText(extractAssistantVisibleText(streamAssistant)).trim()
+    ? extractFinalEvidenceProjection(
+        coerceChatContentText(extractAssistantVisibleText(streamAssistant)),
+      ).visibleText.trim()
     : "";
   let nextRawStreamText = next;
   let shouldPersistRawStreamText = false;

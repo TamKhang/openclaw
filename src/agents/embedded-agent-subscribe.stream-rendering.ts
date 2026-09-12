@@ -21,6 +21,7 @@ import {
   stripDowngradedToolCallText,
   THINKING_TAG_SCAN_RE,
 } from "./embedded-agent-utils.js";
+import { createEvidenceSentinelScanner } from "./provenance/answer-evidence.js";
 
 const STREAM_STRIPPED_BLOCK_TAG_NAMES = [
   "final",
@@ -111,6 +112,11 @@ export function createStreamRendering({
   const messagingToolSourceReplyPayloads = state.messagingToolSourceReplyPayloads;
   const replyDirectiveAccumulator = createStreamingDirectiveAccumulator();
   const partialReplyDirectiveAccumulator = createStreamingDirectiveAccumulator();
+
+  // Block-reply path gets its own stateful sentinel scanner: every user-facing
+  // exit (streaming delta and block reply) suppresses the evidence sentinel,
+  // independent of how text arrived in the block buffer.
+  let blockEvidenceScanner = createEvidenceSentinelScanner();
 
   const stripBlockTags = (
     text: string,
@@ -361,10 +367,15 @@ export function createStreamRendering({
     if (state.suppressBlockChunks || params.silentExpected) {
       return;
     }
+    // Suppress the answer-evidence sentinel on the block-reply path before
+    // <think>/<final> and downgraded tool-call stripping.
+    const evidenceCleaned = blockEvidenceScanner.push(text, {
+      final: options?.final === true,
+    });
     // Strip <think> and <final> blocks across chunk boundaries to avoid leaking reasoning.
     // Also strip downgraded tool call text ([Tool Call: ...], [Historical context: ...], etc.).
     const blockReplyText = stripDowngradedToolCallText(
-      stripBlockTags(text, state.blockState, {
+      stripBlockTags(evidenceCleaned, state.blockState, {
         final: options?.final === true,
         completeMarkdownChunk: options?.completeMarkdownChunk === true,
       }),
@@ -587,6 +598,8 @@ export function createStreamRendering({
   const resetAssistantMessageState = (nextAssistantTextBaseline: number) => {
     state.deltaBuffer = "";
     state.thinkingTagStream = createThinkingTagStreamState();
+    state.partialEvidenceScanner = createEvidenceSentinelScanner();
+    blockEvidenceScanner = createEvidenceSentinelScanner();
     state.deltaBufferIsCommentary = false;
     state.hasFlushedPartialText = false;
     state.blockBuffer = "";

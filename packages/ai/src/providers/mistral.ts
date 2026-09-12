@@ -909,6 +909,9 @@ function toChatMessages(
           }
           continue;
         }
+        if (block.type === "openclawProvenance") {
+          continue; // historical projections never enter provider context
+        }
         toolCalls.push({
           id: block.id,
           type: "function",

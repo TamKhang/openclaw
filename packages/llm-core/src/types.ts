@@ -283,6 +283,15 @@ export interface ToolCall {
   executionMode?: "sequential" | "parallel";
 }
 
+/** Runtime-recognized hidden assistant content block carrying the model's
+ *  same-call evidence projection. Opaque evidence IDs only; never rendered,
+ *  never replayed into provider/model context, never treated as a tool call.
+ */
+export interface OpenClawProvenanceContent {
+  type: "openclawProvenance";
+  usedEvidenceIds: string[];
+}
+
 /** Normalized token and cost accounting for a provider response. */
 export interface Usage {
   input: number;
@@ -362,7 +371,7 @@ export type AssistantDeliveryTtsFacts = {
 
 export interface AssistantMessage {
   role: "assistant";
-  content: (TextContent | ThinkingContent | ToolCall)[];
+  content: (TextContent | ThinkingContent | ToolCall | OpenClawProvenanceContent)[];
   openclawDelivery?: {
     audioAsVoice?: true;
     /** Exact media directives consumed by the managed-media transcript rewrite owner. */

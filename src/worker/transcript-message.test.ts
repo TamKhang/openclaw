@@ -14,6 +14,7 @@ import {
 } from "./embedded-agent-transcript.runtime.js";
 import {
   isWorkerTranscriptMessageFrameSafe,
+  stripAssistantProvenanceBlocks,
   toWorkerTranscriptMessage,
 } from "./transcript-message.js";
 
@@ -267,5 +268,73 @@ describe("worker transcript provider replay", () => {
 
     await expect(runtime.withSessionWriteSettlement(() => undefined)).resolves.toBeUndefined();
     expect(commit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("worker transcript provenance projection", () => {
+  function assistantWithProvenance(): AssistantMessage {
+    return {
+      role: "assistant",
+      content: [
+        { type: "text", text: "answer" },
+        { type: "openclawProvenance", usedEvidenceIds: ["ev_1", "ev_2"] },
+      ],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      timestamp: 0,
+    };
+  }
+
+  it("projects an assistant with provenance into a worker transcript without provenance or evidence IDs", () => {
+    const projected = toWorkerTranscriptMessage(assistantWithProvenance(), "transcript");
+    expect(projected?.kind).toBe("complete");
+    if (projected?.kind !== "complete") return;
+    const json = JSON.stringify(projected.message);
+    expect(json).not.toContain("openclawProvenance");
+    expect(json).not.toContain("ev_1");
+    expect(json).not.toContain("ev_2");
+    expect(projected.message.content).toEqual([{ type: "text", text: "answer" }]);
+  });
+
+  it("leaves ordinary assistant messages unchanged through the projection", () => {
+    const ordinary: AssistantMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "plain" }],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      timestamp: 0,
+    };
+    const projected = toWorkerTranscriptMessage(ordinary, "transcript");
+    expect(projected?.kind).toBe("complete");
+    if (projected?.kind !== "complete") return;
+    expect(projected.message.content).toEqual([{ type: "text", text: "plain" }]);
+  });
+
+  it("stripAssistantProvenanceBlocks removes provenance and keeps ordinary content", () => {
+    const withProv = assistantWithProvenance();
+    const stripped = stripAssistantProvenanceBlocks(withProv);
+    expect(stripped.content).toEqual([{ type: "text", text: "answer" }]);
+    const ordinary = { content: [{ type: "text", text: "plain" }] } as unknown as AssistantMessage;
+    expect(stripAssistantProvenanceBlocks(ordinary)).toBe(ordinary);
   });
 });

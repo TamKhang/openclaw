@@ -153,6 +153,113 @@ describe("runEmbeddedAgent before_agent_finalize", () => {
     expect(acceptedCallIds[1]).not.toBe("call_1");
   });
 
+  it("never inherits a superseded call_1 provenance projection into the accepted answer", async () => {
+    // call_1 carries a valid provenance projection but is superseded by the
+    // before_agent_finalize revision. call_2 has no projection. The real
+    // revision loop must accept call_2 and the accepted answer must carry NO
+    // inherited call_1 projection.
+    let acceptedLastAssistant: EmbeddedRunAttemptResult["lastAssistant"];
+    mockedRunEmbeddedAttempt
+      .mockImplementationOnce(async () =>
+        finalAnswerAttempt("First answer.", {
+          beforeAgentFinalizeRevisionReason: "Tighten the final wording.",
+          lastAssistant: {
+            stopReason: "stop",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [
+              { type: "text", text: "First answer." },
+              { type: "openclawProvenance", usedEvidenceIds: ["ev_from_call_1"] },
+            ],
+            openclawCallId: "call_1",
+          } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+        }),
+      )
+      .mockImplementationOnce(async () => {
+        const attempt = finalAnswerAttempt("Revised answer.", {
+          lastAssistant: {
+            stopReason: "stop",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [{ type: "text", text: "Revised answer." }],
+            openclawCallId: "call_2",
+          } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+        });
+        acceptedLastAssistant = attempt.lastAssistant;
+        return attempt;
+      });
+
+    await runEmbeddedAgent({
+      ...createOverflowRunParams(state),
+      provider: "openai",
+      model: "gpt-5.5",
+      runId: "run-before-finalize-no-inheritance",
+    });
+
+    // The real revision loop ran two attempts and the second was the accepted
+    // revision continuation (call_1 superseded).
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(attemptCall(1).prompt).toContain("Tighten the final wording.");
+    expect(acceptedLastAssistant?.openclawCallId).toBe("call_2");
+    const blocks = acceptedLastAssistant?.content ?? [];
+    expect(blocks.some((block) => block.type === "openclawProvenance")).toBe(false);
+    expect(JSON.stringify(blocks)).not.toContain("ev_from_call_1");
+  });
+
+  it("accepts only call_2's own projection when call_2 declares one", async () => {
+    // call_1 has ev_from_call_1; call_2 has its own ev_from_call_2. Only the
+    // accepted call_2 projection is authoritative.
+    let acceptedLastAssistant: EmbeddedRunAttemptResult["lastAssistant"];
+    mockedRunEmbeddedAttempt
+      .mockImplementationOnce(async () =>
+        finalAnswerAttempt("First answer.", {
+          beforeAgentFinalizeRevisionReason: "Tighten the final wording.",
+          lastAssistant: {
+            stopReason: "stop",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [
+              { type: "text", text: "First answer." },
+              { type: "openclawProvenance", usedEvidenceIds: ["ev_from_call_1"] },
+            ],
+            openclawCallId: "call_1",
+          } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+        }),
+      )
+      .mockImplementationOnce(async () => {
+        const attempt = finalAnswerAttempt("Revised answer.", {
+          lastAssistant: {
+            stopReason: "stop",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [
+              { type: "text", text: "Revised answer." },
+              { type: "openclawProvenance", usedEvidenceIds: ["ev_from_call_2"] },
+            ],
+            openclawCallId: "call_2",
+          } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+        });
+        acceptedLastAssistant = attempt.lastAssistant;
+        return attempt;
+      });
+
+    await runEmbeddedAgent({
+      ...createOverflowRunParams(state),
+      provider: "openai",
+      model: "gpt-5.5",
+      runId: "run-before-finalize-call2-projection",
+    });
+
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(attemptCall(1).prompt).toContain("Tighten the final wording.");
+    expect(acceptedLastAssistant?.openclawCallId).toBe("call_2");
+    const provenance = (acceptedLastAssistant?.content ?? []).filter(
+      (block) => block.type === "openclawProvenance",
+    ) as Array<{ usedEvidenceIds: string[] }>;
+    expect(provenance).toHaveLength(1);
+    expect(provenance[0]?.usedEvidenceIds).toEqual(["ev_from_call_2"]);
+  });
+
   it("replaces an incomplete-turn continuation with a finalize revision", async () => {
     mockedRunEmbeddedAttempt
       .mockResolvedValueOnce(

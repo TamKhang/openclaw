@@ -1,6 +1,7 @@
 import { clampPositiveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { extractFinalEvidenceProjection } from "../../provenance/answer-evidence.js";
 /**
  * Emits diagnostic model-call events around embedded-agent stream functions.
  */
@@ -99,13 +100,74 @@ async function* observeModelCallIterator<T>(
   }
 }
 
+/**
+ * Strip the certified answer-evidence sentinel from the same assistant message
+ * and materialize the hidden `openclawProvenance` content block when this call
+ * is a terminal answer (stop/length). The block travels on the SAME object that
+ * receives `openclawCallId`, so the projection and call identity share one
+ * immutable, synchronously-derived replacement.
+ */
+function projectAssistantEvidenceProjection(
+  result: Record<string, unknown>,
+  materializeBlock: boolean,
+): { content?: unknown } {
+  const content = result.content;
+  if (typeof content === "string") {
+    const extraction = extractFinalEvidenceProjection(content);
+    if (extraction.usedEvidenceIds === undefined && extraction.visibleText === content) {
+      return {};
+    }
+    const blocks = [
+      { type: "text", text: extraction.visibleText },
+      ...(materializeBlock && extraction.usedEvidenceIds !== undefined
+        ? [{ type: "openclawProvenance", usedEvidenceIds: extraction.usedEvidenceIds }]
+        : []),
+    ];
+    return { content: blocks };
+  }
+  if (!Array.isArray(content)) {
+    return {};
+  }
+  let lastTextIndex = -1;
+  for (let index = content.length - 1; index >= 0; index -= 1) {
+    const block = content[index];
+    if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+      lastTextIndex = index;
+      break;
+    }
+  }
+  if (lastTextIndex === -1) {
+    return {};
+  }
+  const textBlock = content[lastTextIndex] as {
+    type: string;
+    text: string;
+    textSignature?: string;
+  };
+  const extraction = extractFinalEvidenceProjection(textBlock.text);
+  if (extraction.usedEvidenceIds === undefined && extraction.visibleText === textBlock.text) {
+    return {};
+  }
+  const nextContent = content.slice();
+  nextContent[lastTextIndex] = { ...textBlock, text: extraction.visibleText };
+  if (materializeBlock && extraction.usedEvidenceIds !== undefined) {
+    nextContent.push({
+      type: "openclawProvenance",
+      usedEvidenceIds: extraction.usedEvidenceIds,
+    });
+  }
+  return { content: nextContent };
+}
+
 function withOpenClawModelCallIdentity<T>(result: T, callId: string): T {
   // The runtime call identity is attached after observation so diagnostic
   // content capture and byte accounting observe the provider's exact output.
   // Overwriting unconditionally guarantees the model cannot pre-seed or forge
   // its own authoritative callId through assistant-message content or fields.
   if (isRecord(result) && result.role === "assistant") {
-    return { ...result, openclawCallId: callId } as T;
+    const terminalAnswer = result.stopReason === "stop" || result.stopReason === "length";
+    const projected = projectAssistantEvidenceProjection(result, terminalAnswer);
+    return { ...result, ...projected, openclawCallId: callId } as T;
   }
   return result;
 }

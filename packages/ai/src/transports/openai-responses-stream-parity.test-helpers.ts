@@ -121,7 +121,9 @@ function projectBlock(block: AssistantMessage["content"][number]): ProjectedBloc
   if (block.type === "text") {
     return { type: "text", text: block.text };
   }
-  const toolCall = block as typeof block & { partialJson?: string };
+  const toolCall = block as Extract<AssistantMessage["content"][number], { type: "toolCall" }> & {
+    partialJson?: string;
+  };
   return {
     type: "toolCall",
     id: toolCall.id.replace(/^call_[a-f0-9]{24}/, "call_<generated>"),

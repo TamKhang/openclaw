@@ -154,27 +154,34 @@ export function projectWorkerProviderReplay<
 function toWorkerAssistantMessage(message: AssistantMessage): WorkerTranscriptAssistantMessage {
   return {
     role: "assistant",
-    content: message.content.map((part) => {
-      if (part.type === "text") {
-        return cloneTextContent(part);
-      }
-      if (part.type === "thinking") {
+    content: message.content
+      .filter(
+        (
+          part,
+        ): part is Exclude<AssistantMessage["content"][number], { type: "openclawProvenance" }> =>
+          part.type !== "openclawProvenance",
+      )
+      .map((part) => {
+        if (part.type === "text") {
+          return cloneTextContent(part);
+        }
+        if (part.type === "thinking") {
+          return {
+            type: "thinking" as const,
+            thinking: part.thinking,
+            ...(part.thinkingSignature ? { thinkingSignature: part.thinkingSignature } : {}),
+            ...(part.redacted === undefined ? {} : { redacted: part.redacted }),
+          };
+        }
         return {
-          type: "thinking" as const,
-          thinking: part.thinking,
-          ...(part.thinkingSignature ? { thinkingSignature: part.thinkingSignature } : {}),
-          ...(part.redacted === undefined ? {} : { redacted: part.redacted }),
+          type: "toolCall" as const,
+          id: part.id,
+          name: part.name,
+          arguments: structuredClone(part.arguments),
+          ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
+          ...(part.executionMode ? { executionMode: part.executionMode } : {}),
         };
-      }
-      return {
-        type: "toolCall" as const,
-        id: part.id,
-        name: part.name,
-        arguments: structuredClone(part.arguments),
-        ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
-        ...(part.executionMode ? { executionMode: part.executionMode } : {}),
-      };
-    }),
+      }),
     api: message.api,
     provider: message.provider,
     model: message.model,
@@ -251,6 +258,20 @@ export function toWorkerTranscriptMessage(
     };
   }
   return undefined;
+}
+
+/** Remove hidden provenance blocks so a checked message cannot reintroduce them. */
+export function stripAssistantProvenanceBlocks<T extends { content?: unknown }>(message: T): T {
+  if (!Array.isArray(message.content)) {
+    return message;
+  }
+  const filtered = message.content.filter((block) => {
+    if (!block || typeof block !== "object") {
+      return true;
+    }
+    return (block as { type?: unknown }).type !== "openclawProvenance";
+  });
+  return filtered.length === message.content.length ? message : { ...message, content: filtered };
 }
 
 export function isWorkerTranscriptMessageFrameSafe(message: WorkerTranscriptMessage): boolean {

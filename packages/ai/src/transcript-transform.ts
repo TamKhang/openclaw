@@ -84,6 +84,12 @@ function transformAssistant<TApi extends Api>(
       ? [{ type: "text" as const, text: message.content }]
       : message.content;
   const content = blocks.flatMap((block) => {
+    if (block.type === "openclawProvenance") {
+      // Historical projections are inert history: never replay them into
+      // provider/model context, and never let them fall into the toolCall
+      // default branch below.
+      return [];
+    }
     if (block.type === "thinking") {
       if (replayMode === "drop") {
         return [];

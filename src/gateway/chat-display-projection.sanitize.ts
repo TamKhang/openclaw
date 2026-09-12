@@ -603,7 +603,19 @@ export function sanitizeChatHistoryMessage(
       changed = true;
     }
     if (entry.role === "assistant" && Array.isArray(entry.content)) {
-      const mixedToolContent = projectAssistantMixedToolContent(entry.content, maxChars);
+      let assistantContent = entry.content as unknown[];
+      const withoutProvenance = assistantContent.filter((block) => {
+        if (!block || typeof block !== "object") {
+          return true;
+        }
+        return (block as { type?: unknown }).type !== "openclawProvenance";
+      });
+      if (withoutProvenance.length !== assistantContent.length) {
+        assistantContent = withoutProvenance;
+        entry.content = withoutProvenance;
+        changed = true;
+      }
+      const mixedToolContent = projectAssistantMixedToolContent(assistantContent, maxChars);
       if (mixedToolContent) {
         entry.content = mixedToolContent.content;
         if (entry.phase === "commentary") {
@@ -611,7 +623,7 @@ export function sanitizeChatHistoryMessage(
         }
         changed = true;
       } else {
-        const sanitizedPhases = sanitizeAssistantPhasedContentBlocks(entry.content);
+        const sanitizedPhases = sanitizeAssistantPhasedContentBlocks(assistantContent);
         if (sanitizedPhases.changed) {
           entry.content = sanitizedPhases.content;
           changed = true;

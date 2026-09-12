@@ -27,6 +27,7 @@ import type {
 import type { ThinkingTagStreamState } from "./embedded-agent-utils.js";
 import type { McpConnectAction } from "./mcp-connect-action.js";
 import type { McpAppChannelView } from "./mcp-ui-resource.js";
+import type { EvidenceSentinelScanner } from "./provenance/answer-evidence.js";
 import type { AgentRunTimeoutPhase } from "./run-timeout-attribution.js";
 import type { AgentMessage } from "./runtime/index.js";
 import type { ToolErrorSummary } from "./tool-error-summary.js";
@@ -120,6 +121,8 @@ export type EmbeddedAgentSubscribeState = {
   deltaBuffer: string;
   /** Scanner state shares deltaBuffer's lifecycle so each provider byte is parsed once. */
   thinkingTagStream: ThinkingTagStreamState;
+  /** Stateful answer-evidence sentinel scanner for the streaming delta path. */
+  partialEvidenceScanner: EvidenceSentinelScanner;
   /**
    * True while the buffered stream text belongs to an explicit commentary
    * item (e.g. the Responses API "commentary" phase). Commentary is routed to

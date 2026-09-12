@@ -27,6 +27,8 @@ import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js"
 import { fitWorkerReplayImages } from "./replay-message-window.js";
 import {
   isWorkerTranscriptMessageFrameSafe,
+  stripAssistantProvenanceBlocks,
+  toWorkerTranscriptMessage,
   WORKER_PROVIDER_REPLAY_LOCAL_RETRY_MESSAGE,
 } from "./transcript-message.js";
 import type { WorkerInferenceProxyClient } from "./worker-rpc-clients.js";
@@ -232,11 +234,16 @@ function transcriptSafeErrorMessage(
   modelRef: WorkerInferenceModelRef,
   message: AssistantMessage,
 ): AssistantMessage {
-  if (isWorkerTranscriptMessageFrameSafe(message)) {
-    return message;
+  // Sanitize first: the exact object whose worker-transcript projection is
+  // frame-checked is the object returned, so provenance can never be
+  // reintroduced after the safety check.
+  const sanitized = stripAssistantProvenanceBlocks(message);
+  const projected = toWorkerTranscriptMessage(sanitized, "transcript");
+  if (projected?.kind === "complete" && isWorkerTranscriptMessageFrameSafe(projected.message)) {
+    return sanitized;
   }
   const replacement = emptyAssistantMessage(modelRef);
-  replacement.stopReason = message.stopReason === "aborted" ? "aborted" : "error";
+  replacement.stopReason = sanitized.stopReason === "aborted" ? "aborted" : "error";
   replacement.errorMessage = "Worker inference result exceeds the transcript message limit.";
   return replacement;
 }

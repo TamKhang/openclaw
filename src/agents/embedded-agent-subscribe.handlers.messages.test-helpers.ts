@@ -5,6 +5,7 @@ import { handleMessageEnd } from "./embedded-agent-subscribe.handlers.messages.l
 import { handleMessageUpdate } from "./embedded-agent-subscribe.handlers.messages.update.js";
 import type { EmbeddedAgentSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
 import { createThinkingTagStreamState } from "./embedded-agent-utils.js";
+import { createEvidenceSentinelScanner } from "./provenance/answer-evidence.js";
 
 export function updateMessage(
   context: EmbeddedAgentSubscribeContext,
@@ -64,6 +65,7 @@ export function createMessageUpdateContext(
       streamReasoning: false,
       deltaBuffer: "",
       thinkingTagStream: createThinkingTagStreamState(),
+      partialEvidenceScanner: createEvidenceSentinelScanner(),
       blockBuffer: "",
       partialBlockState: {
         thinking: false,
@@ -156,6 +158,7 @@ export function createMessageEndContext(
       streamReasoning: false,
       blockReplyBreak: "message_end",
       deltaBuffer: "Need send.",
+      partialEvidenceScanner: createEvidenceSentinelScanner(),
       blockBuffer: "Need send.",
       blockState: {
         thinking: false,

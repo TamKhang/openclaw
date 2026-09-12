@@ -4,6 +4,7 @@ import type { EmbeddedAgentSubscribeState } from "./embedded-agent-subscribe.han
 import type { SubscribeEmbeddedAgentSessionParams } from "./embedded-agent-subscribe.types.js";
 import { createThinkingTagStreamState } from "./embedded-agent-utils.js";
 import { collectAgentInternalEventMedia } from "./internal-events.js";
+import { createEvidenceSentinelScanner } from "./provenance/answer-evidence.js";
 
 export function createEmbeddedAgentSubscribeState(
   params: SubscribeEmbeddedAgentSessionParams,
@@ -35,6 +36,7 @@ export function createEmbeddedAgentSubscribeState(
       typeof params.onReasoningStream === "function",
     deltaBuffer: "",
     thinkingTagStream: createThinkingTagStreamState(),
+    partialEvidenceScanner: createEvidenceSentinelScanner(),
     deltaBufferIsCommentary: false,
     hasFlushedPartialText: false,
     blockBuffer: "",
