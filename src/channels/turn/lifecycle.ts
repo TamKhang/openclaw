@@ -10,7 +10,10 @@ import {
   resolveInboundReplyHookTarget,
 } from "../../hooks/message-hook-mappers.js";
 import { formatErrorMessage, toErrorObject } from "../../infra/errors.js";
-import { applyMessageSendingHook } from "../../infra/outbound/deliver-hooks.js";
+import {
+  applyMessageSendingHook,
+  resolveProvenanceExemptForDelivery,
+} from "../../infra/outbound/deliver-hooks.js";
 import { normalizeEmptyPayloadForDelivery } from "../../infra/outbound/deliver-payload.js";
 import {
   isPlatformMessageNotDispatchedError,
@@ -336,6 +339,7 @@ async function applyRoutedDirectMessageSending(params: {
       params.turn.ctxPayload.ReplyToId,
     threadId: params.turn.ctxPayload.MessageThreadId,
     sessionKey: params.turn.routeSessionKey,
+    provenanceExempt: resolveProvenanceExemptForDelivery(params.turn.ctxPayload.CommandTurn),
   });
   if (hookResult.cancelled) {
     return {

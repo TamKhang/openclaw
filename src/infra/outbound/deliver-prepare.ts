@@ -193,6 +193,7 @@ export async function prepareOutboundPayloadBatch(
         threadId: params.threadId,
         sessionKey: sessionKeyForHooks,
         outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization,
+        provenanceExempt: params.provenanceExempt,
       });
     } catch (error) {
       // Modifier handlers are fail-open. Only a host invariant failure can

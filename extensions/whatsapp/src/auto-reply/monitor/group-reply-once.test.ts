@@ -105,6 +105,17 @@ describe("authorizeExplicitOwnerGroupReply", () => {
       expect(result.authorization.target.displayName).toBe("Roster Alice");
     }
   });
+
+  it("mints the exact 120-second delegated_group_reply TTL", () => {
+    expect(GROUP_REPLY_ONCE_TTL_MS).toBe(120_000);
+    const msg = makeGroupReplyMessage();
+    const result = authorize({ msg });
+    expect(result.status).toBe("authorized");
+    if (result.status !== "authorized") {
+      return;
+    }
+    expect(result.authorization.expiresAt - result.authorization.createdAt).toBe(120_000);
+  });
 });
 
 describe("consumeGroupReplyOnceAuthorization", () => {
@@ -152,6 +163,34 @@ describe("consumeGroupReplyOnceAuthorization", () => {
     expect(consumeGroupReplyOnceAuthorization({ msg: wrong })).toMatchObject({
       status: "denied",
       reason: "trigger_mismatch",
+    });
+  });
+
+  it("denies a delegated authorization replayed against a different group", () => {
+    const msg = makeGroupReplyMessage();
+    expect(authorize({ msg }).status).toBe("authorized");
+    const wrongGroup = createTestWebInboundMessage({
+      admission: { conversation: { kind: "group", id: "other@g.us" } },
+      event: { id: "owner-trigger-1" },
+      payload: { body: "Bruno, come in" },
+      platform: {
+        chatJid: "group@g.us",
+        recipientJid: "bot@s.whatsapp.net",
+        sender: { e164: OWNER_E164, name: "Owner" },
+        self: { e164: "+15550000000" },
+      },
+      quote: {
+        context: {
+          id: "quoted-1",
+          body: "Can you help me with this?",
+          sender: { e164: TARGET_E164, name: "Alice" },
+        },
+      },
+    });
+    wrongGroup.groupReplyOnce = msg.groupReplyOnce;
+    expect(consumeGroupReplyOnceAuthorization({ msg: wrongGroup })).toMatchObject({
+      status: "denied",
+      reason: "group_mismatch",
     });
   });
 });

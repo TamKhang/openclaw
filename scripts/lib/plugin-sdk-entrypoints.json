@@ -341,5 +341,6 @@
   "web-media",
   "agent-core",
   "agent-sessions",
-  "llm"
+  "llm",
+  "whatsapp-outbound-authorization"
 ]

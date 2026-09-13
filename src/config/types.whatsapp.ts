@@ -18,6 +18,8 @@ export type WhatsAppActionConfig = {
 export type WhatsAppReactionLevel = ReactionLevel;
 
 export type WhatsAppGroupConfig = {
+  /** Trusted operator-assigned display name used by owner_explicit_send destination resolution. */
+  name?: string;
   requireMention?: boolean;
   tools?: GroupToolPolicyConfig;
   toolsBySender?: GroupToolPolicyBySenderConfig;

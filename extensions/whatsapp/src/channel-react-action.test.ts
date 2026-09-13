@@ -50,6 +50,7 @@ vi.mock("./channel-react-action.runtime.js", async () => {
       return undefined;
     },
     isWhatsAppGroupJid: (value?: string | null) => (value ?? "").trim().endsWith("@g.us"),
+    isWhatsAppNewsletterJid: (value?: string | null) => /@newsletter$/i.test((value ?? "").trim()),
     normalizeWhatsAppTarget: (value?: string | null) => {
       const raw = (value ?? "").trim();
       if (!raw) {
@@ -277,6 +278,43 @@ describe("whatsapp react action messageId resolution", () => {
       }),
     ).rejects.toThrow("WhatsApp upload-file blocked");
     expect(hoisted.sendMessageWhatsApp).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a group upload-file with no permit", async () => {
+    await expect(
+      handleWhatsAppMessageAction({
+        action: "upload-file",
+        params: { to: "123456789-987654321@g.us", filePath: "/tmp/file.txt" },
+        cfg: baseCfg,
+        accountId: "default",
+        mediaReadFile: vi.fn(async () => Buffer.from("media")),
+      }),
+    ).rejects.toThrow(/requires a trusted outbound authorization permit/);
+    expect(hoisted.sendMessageWhatsApp).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a newsletter upload-file destination", async () => {
+    await expect(
+      handleWhatsAppMessageAction({
+        action: "upload-file",
+        params: { to: "123456789@newsletter", filePath: "/tmp/file.txt" },
+        cfg: baseCfg,
+        accountId: "default",
+        mediaReadFile: vi.fn(async () => Buffer.from("media")),
+      }),
+    ).rejects.toThrow(/requires a trusted outbound authorization permit/);
+    expect(hoisted.sendMessageWhatsApp).not.toHaveBeenCalled();
+  });
+
+  it("keeps direct upload-file behavior unchanged", async () => {
+    await handleWhatsAppMessageAction({
+      action: "upload-file",
+      params: { to: "+1555", filePath: "/tmp/file.txt" },
+      cfg: baseCfg,
+      accountId: "default",
+      mediaReadFile: vi.fn(async () => Buffer.from("media")),
+    });
+    expect(hoisted.sendMessageWhatsApp).toHaveBeenCalledTimes(1);
   });
 
   it("sends upload-file from a whitespace-heavy base64 data URL", async () => {

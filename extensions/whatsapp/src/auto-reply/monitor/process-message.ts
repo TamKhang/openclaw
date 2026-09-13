@@ -52,6 +52,7 @@ import {
 } from "./inbound-dispatch.js";
 import { trackBackgroundTask, updateLastRouteInBackground } from "./last-route.js";
 import { buildInboundLine } from "./message-line.js";
+import { authorizeOwnerExplicitSend } from "./owner-explicit-send.js";
 import {
   buildHistoryContextFromEntries,
   createChannelMessageReplyPipeline,
@@ -401,6 +402,19 @@ export async function processMessage(params: {
       : commandAuthorized
         ? ({ kind: "authorized" } as const)
         : ({ kind: "denied" } as const);
+  const ownerExplicitSend =
+    conversationKind === "direct"
+      ? authorizeOwnerExplicitSend({
+          cfg: params.cfg,
+          msg: params.msg,
+          baseMentionConfig: {
+            mentionRegexes: [],
+            allowFrom: inboundPolicy.configuredAllowFrom,
+          },
+          authDir: account.authDir,
+          accountId: params.route.accountId,
+        })
+      : ({ status: "not_explicit_send" } as const);
   const prepared = await prepareWhatsAppInboundContext({
     bodyForAgent,
     combinedBody,
@@ -429,18 +443,51 @@ export async function processMessage(params: {
     suppressMessageReceivedHooks: true,
   });
   const { inbound, turnInput, ctxPayload } = prepared;
+  let outboundDeliveryTarget: string | undefined;
   if (params.msg.groupReplyOnce) {
     ctxPayload.OutboundGroupReplyAuthorization = {
+      authorizationClass: params.msg.groupReplyOnce.authorizationClass,
+      policyVersion: params.msg.groupReplyOnce.policyVersion,
+      actionType: params.msg.groupReplyOnce.actionType,
       capability: "whatsapp.group.reply_once",
       token: params.msg.groupReplyOnce.token,
+      ownerE164: params.msg.groupReplyOnce.ownerE164,
       groupId: params.msg.groupReplyOnce.groupId,
       chatId: params.msg.groupReplyOnce.chatId,
       ownerTriggerMessageId: params.msg.groupReplyOnce.ownerTriggerMessageId,
       quotedMessageId: params.msg.groupReplyOnce.quotedMessageId,
       targetParticipantId: params.msg.groupReplyOnce.target.participantId,
+      sourceEventId: params.msg.groupReplyOnce.sourceEventId,
+      createdAt: params.msg.groupReplyOnce.createdAt,
+      expiresAt: params.msg.groupReplyOnce.expiresAt,
+      maxSends: params.msg.groupReplyOnce.maxSends,
+    };
+  } else if (ownerExplicitSend.status === "authorized") {
+    const authorization = ownerExplicitSend.authorization;
+    ctxPayload.OutboundGroupReplyAuthorization = {
+      authorizationClass: authorization.authorizationClass,
+      policyVersion: authorization.policyVersion,
+      actionType: authorization.actionType,
+      token: authorization.token,
+      ownerE164: authorization.ownerE164,
+      groupId: authorization.groupId,
+      chatId: authorization.chatId,
+      sourceEventId: authorization.sourceEventId,
+      createdAt: authorization.createdAt,
+      expiresAt: authorization.expiresAt,
+      maxSends: authorization.maxSends,
+    };
+    outboundDeliveryTarget = authorization.groupId;
+  }
+  let transport = buildWhatsAppInboundTransportContext(params.msg);
+  if (outboundDeliveryTarget) {
+    transport = {
+      ...transport,
+      conversationId: outboundDeliveryTarget,
+      conversationKind: "group",
+      chatJid: outboundDeliveryTarget,
     };
   }
-  const transport = buildWhatsAppInboundTransportContext(params.msg);
   const ingressLifecycle = resolveWhatsAppIngressLifecycle(params.msg);
   const turnAdoptionLifecycle = ingressLifecycle
     ? bindIngressLifecycleToReplyOptions(ingressLifecycle).turnAdoptionLifecycle
@@ -521,6 +568,7 @@ export async function processMessage(params: {
           statusReactionController,
           transport,
           turnAdoptionLifecycle,
+          ...(outboundDeliveryTarget ? { outboundDeliveryTarget } : {}),
         });
         finalizeReply = finalize;
         return {

@@ -16,6 +16,7 @@ import { requireRuntimeConfig } from "openclaw/plugin-sdk/plugin-config-runtime"
 import { normalizePollInput, type PollInput } from "openclaw/plugin-sdk/poll-runtime";
 import { resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-chunking";
 import { createSubsystemLogger, getChildLogger } from "openclaw/plugin-sdk/runtime-env";
+import { claimWhatsAppOutboundAuthorizationForTransport } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
 import {
   resolveDefaultWhatsAppAccountId,
   resolveWhatsAppAccount,
@@ -30,7 +31,7 @@ import {
   type WhatsAppSendResult,
 } from "./inbound/send-result.js";
 import type { ActiveWebListener, ActiveWebSendOptions } from "./inbound/types.js";
-import { isWhatsAppNewsletterJid } from "./normalize.js";
+import { isWhatsAppGroupJid, isWhatsAppNewsletterJid } from "./normalize.js";
 import {
   normalizeWhatsAppPayloadText,
   prepareWhatsAppOutboundMedia,
@@ -439,6 +440,28 @@ export async function sendReactionWhatsApp(
   }
 }
 
+/**
+ * Model-visible polls cannot carry a trusted owner_explicit_send /
+ * delegated_group_reply permit, so group and newsletter-like destinations must
+ * fail closed before physical poll transport. Direct/DM polls are unchanged.
+ */
+function assertWhatsAppPollGroupTransportAuthorized(to: string): void {
+  if (!isWhatsAppGroupJid(to) && !isWhatsAppNewsletterJid(to)) {
+    return;
+  }
+  const decision = claimWhatsAppOutboundAuthorizationForTransport({
+    to,
+    channel: "whatsapp",
+    authorization: undefined,
+    originEventId: undefined,
+  });
+  if (isWhatsAppNewsletterJid(to) || decision.status === "denied") {
+    throw new Error(
+      `WhatsApp poll to ${to} requires a trusted outbound authorization permit; model-visible polls cannot mint one.`,
+    );
+  }
+}
+
 export async function sendPollWhatsApp(
   to: string,
   poll: PollInput,
@@ -459,6 +482,7 @@ export async function sendPollWhatsApp(
   });
   try {
     const jid = toWhatsappJid(to);
+    assertWhatsAppPollGroupTransportAuthorized(jid);
     const redactedJid = redactIdentifier(jid);
     const normalized = normalizePollInput(poll, { maxOptions: 12 });
     outboundLog.info(`Sending poll -> ${redactedJid}`);

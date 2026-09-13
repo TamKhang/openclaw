@@ -1,3 +1,7 @@
+import {
+  isAuthorizedTextSlashCommandTurn,
+  isNativeCommandTurn,
+} from "../../auto-reply/command-turn-context.js";
 import { copyReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
 import {
@@ -31,6 +35,7 @@ import {
   summarizeOutboundPayloadForTransport,
   type NormalizedOutboundPayload,
 } from "./payloads.js";
+import { isWhatsAppGroupDestination } from "./whatsapp-outbound-authorization.js";
 
 export type ReplyPayloadSuppressedObserver = (
   payload: ReplyPayload,
@@ -69,26 +74,107 @@ export function buildInboundReplyPayloadSendingBeforeDeliver(
 }
 
 /** Legacy dispatcher-owned `message_sending` stage retained for low-level SDK compatibility. */
+const PROVENANCE_ENFORCEMENT_FAILED = "provenance_enforcement_failed";
+const PROVENANCE_ENFORCEMENT_UNAVAILABLE = "provenance_enforcement_unavailable";
+
+/**
+ * Trusted provenance-exempt admission: only native command turns and authorized
+ * text slash-command turns may skip mandatory provenance. Normal messages —
+ * including text that merely looks command-like — are never exempt.
+ */
+export function resolveProvenanceExemptForDelivery(
+  commandTurn: FinalizedMsgContext["CommandTurn"],
+): boolean | undefined {
+  return isNativeCommandTurn(commandTurn) || isAuthorizedTextSlashCommandTurn(commandTurn)
+    ? true
+    : undefined;
+}
+
+/**
+ * Mandatory provenance enforcement is derived from trusted delivery context —
+ * channel id plus the literal delivery destination — never from the serialized
+ * session-key shape. This keeps owner-facing WhatsApp DMs fail-closed across
+ * every supported session.dmScope, including the default `main` scope whose
+ * session key is `agent:<agentId>:main`.
+ */
+function resolveProvenanceEnforcementFailClosed(params: {
+  channel?: string;
+  to?: string;
+  provenanceExempt?: boolean;
+}): boolean {
+  if (params.provenanceExempt === true) {
+    return false;
+  }
+  if (params.channel !== "whatsapp") {
+    return false;
+  }
+  const to = params.to?.trim();
+  return Boolean(to) && !isWhatsAppGroupDestination(to);
+}
+
+/**
+ * A mandatory provenance decision must affirmatively deny (`cancel: true`) or
+ * rewrite the outbound content as a string. A void/malformed result from the
+ * enforcement hook is treated as a denial instead of silently allowing delivery.
+ */
+type MessageSendingResultLike = { cancel?: unknown; content?: unknown };
+
+function isMessageSendingResultLike(value: unknown): value is MessageSendingResultLike {
+  return Boolean(value) && typeof value === "object";
+}
+
+function isMandatoryMessageSendingResult(result: unknown): boolean {
+  if (!isMessageSendingResultLike(result)) {
+    return false;
+  }
+  return result.cancel === true || typeof result.content === "string";
+}
+
 export function buildLegacyInboundMessageSendingBeforeDeliver(
   ctx: MsgContext | FinalizedMsgContext,
 ): ReplyDispatchBeforeDeliver | undefined {
   const hookRunner = getGlobalHookRunner();
-  if (!hookRunner?.hasHooks("message_sending")) {
-    return undefined;
-  }
   const finalized = finalizeInboundContext(ctx);
   const hookCtx = deriveInboundMessageHookContext(finalized);
   const replyTarget = resolveInboundReplyHookTarget(finalized, hookCtx);
+  const provenanceExempt = resolveProvenanceExemptForDelivery(finalized.CommandTurn);
+  const provenanceEnforcementFailClosed = resolveProvenanceEnforcementFailClosed({
+    channel: hookCtx.channelId,
+    to: replyTarget,
+    provenanceExempt,
+  });
+  if (!hookRunner?.hasHooks("message_sending")) {
+    if (!provenanceEnforcementFailClosed) {
+      return undefined;
+    }
+    // Mandatory provenance has no enforcement hook available: deny instead of
+    // letting the legacy dispatcher deliver an unfinalized owner-facing reply.
+    return markReplyDispatchBeforeDeliverDeadlineOwned(async () => null);
+  }
   return markReplyDispatchBeforeDeliverDeadlineOwned(
     async (payload: ReplyPayload): Promise<ReplyPayload | null> => {
       if (!payload.text) {
         return payload;
       }
-      const result = await hookRunner.runMessageSending(
-        { content: payload.text, to: replyTarget },
-        toPluginMessageContext(hookCtx),
-      );
+      const messageContext = toPluginMessageContext(hookCtx);
+      messageContext.provenanceExempt = provenanceExempt;
+      let result;
+      try {
+        result = await hookRunner.runMessageSending(
+          { content: payload.text, to: replyTarget },
+          messageContext,
+          { failClosedOnError: provenanceEnforcementFailClosed },
+        );
+      } catch (error) {
+        if (!provenanceEnforcementFailClosed) {
+          throw error;
+        }
+        return null;
+      }
       if (result?.cancel) {
+        return null;
+      }
+      if (provenanceEnforcementFailClosed && !isMandatoryMessageSendingResult(result)) {
         return null;
       }
       return result?.content == null
@@ -118,6 +204,7 @@ export function buildProjectedInboundMessageSendingBeforeDeliver(
       replyToId: payload.replyToId ?? finalized.ReplyToIdFull ?? finalized.ReplyToId,
       threadId: finalized.MessageThreadId,
       sessionKey: finalized.SessionKey,
+      provenanceExempt: resolveProvenanceExemptForDelivery(finalized.CommandTurn),
     });
     if (hookResult.cancelled) {
       return null;
@@ -138,6 +225,7 @@ export async function applyMessageSendingHook(params: {
   threadId?: string | number | null;
   sessionKey?: string;
   outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
+  provenanceExempt?: boolean;
 }): Promise<{
   cancelled: boolean;
   cancelReason?: string;
@@ -146,6 +234,21 @@ export async function applyMessageSendingHook(params: {
   payload: ReplyPayload;
   payloadSummary: NormalizedOutboundPayload;
 }> {
+  const provenanceEnforcementFailClosed = resolveProvenanceEnforcementFailClosed({
+    channel: params.channel,
+    to: params.to,
+    provenanceExempt: params.provenanceExempt,
+  });
+  const messageSendingAvailable = params.hookRunner?.hasHooks("message_sending") ?? false;
+  if (provenanceEnforcementFailClosed && !messageSendingAvailable) {
+    return {
+      cancelled: true,
+      cancelReason: PROVENANCE_ENFORCEMENT_UNAVAILABLE,
+      contentRewritten: false,
+      payload: params.payload,
+      payloadSummary: params.payloadSummary,
+    };
+  }
   if (!params.enabled) {
     return {
       cancelled: false,
@@ -175,13 +278,24 @@ export async function applyMessageSendingHook(params: {
         ...(params.outboundGroupReplyAuthorization
           ? { outboundGroupReplyAuthorization: params.outboundGroupReplyAuthorization }
           : {}),
+        ...(params.provenanceExempt === true ? { provenanceExempt: true } : {}),
       },
+      { failClosedOnError: provenanceEnforcementFailClosed },
     );
     if (sendingResult?.cancel) {
       return {
         cancelled: true,
         ...(sendingResult.cancelReason ? { cancelReason: sendingResult.cancelReason } : {}),
         ...(sendingResult.metadata ? { hookMetadata: sendingResult.metadata } : {}),
+        contentRewritten: false,
+        payload: params.payload,
+        payloadSummary: params.payloadSummary,
+      };
+    }
+    if (provenanceEnforcementFailClosed && !isMandatoryMessageSendingResult(sendingResult)) {
+      return {
+        cancelled: true,
+        cancelReason: PROVENANCE_ENFORCEMENT_FAILED,
         contentRewritten: false,
         payload: params.payload,
         payloadSummary: params.payloadSummary,
@@ -224,7 +338,18 @@ export async function applyMessageSendingHook(params: {
       },
     };
   } catch {
-    // Don't block delivery on hook failure.
+    if (provenanceEnforcementFailClosed) {
+      // Mandatory provenance enforcement failed or timed out: deny delivery
+      // rather than letting a degraded runtime convert a missing DENY into ALLOW.
+      return {
+        cancelled: true,
+        cancelReason: PROVENANCE_ENFORCEMENT_FAILED,
+        contentRewritten: false,
+        payload: params.payload,
+        payloadSummary: params.payloadSummary,
+      };
+    }
+    // Don't block delivery on hook failure for non-mandatory paths.
     return {
       cancelled: false,
       contentRewritten: false,

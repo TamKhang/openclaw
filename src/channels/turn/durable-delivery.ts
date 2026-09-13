@@ -5,6 +5,7 @@ import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizeDeliverableOutboundChannel } from "../../infra/outbound/channel-resolution.js";
+import { resolveProvenanceExemptForDelivery } from "../../infra/outbound/deliver-hooks.js";
 import {
   type DeliverOutboundPayloadsParams,
   type DurableFinalDeliveryRequirement,
@@ -35,6 +36,7 @@ export type DurableInboundReplyDeliveryOptions = Pick<
   | "silent"
   | "threadId"
   | "outboundGroupReplyAuthorization"
+  | "outboundAuthorizationOriginEventId"
 > & {
   to?: string | null;
   replyToId?: string | null;
@@ -243,6 +245,9 @@ export async function deliverInboundReplyWithMessageSendContextCore(
     session,
     gatewayClientScopes: params.ctxPayload.GatewayClientScopes ?? [],
     outboundGroupReplyAuthorization: params.ctxPayload.OutboundGroupReplyAuthorization,
+    provenanceExempt: resolveProvenanceExemptForDelivery(params.ctxPayload.CommandTurn),
+    outboundAuthorizationOriginEventId:
+      params.ctxPayload.OutboundGroupReplyAuthorization?.sourceEventId,
   });
   if (send.status === "failed") {
     return { status: "failed" as const, error: send.error };

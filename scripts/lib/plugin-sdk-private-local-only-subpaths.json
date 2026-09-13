@@ -197,5 +197,6 @@
   "video-generation-runtime",
   "web-content-extractor",
   "webhook-targets",
-  "windows-spawn"
+  "windows-spawn",
+  "whatsapp-outbound-authorization-registration"
 ]

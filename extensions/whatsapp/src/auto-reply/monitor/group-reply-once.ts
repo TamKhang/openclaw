@@ -7,6 +7,7 @@
 // WhatsApp outbound delivery guard consumes the authorization.
 import { randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { registerWhatsAppOutboundAuthorization } from "openclaw/plugin-sdk/whatsapp-outbound-authorization-registration";
 import {
   getPrimaryIdentityId,
   getReplyContext,
@@ -224,6 +225,9 @@ export function authorizeExplicitOwnerGroupReply(
     authoritativeDisplayName: params.authoritativeDisplayName,
   });
   const authorization: GroupReplyOnceAuthorization = {
+    authorizationClass: "delegated_group_reply",
+    policyVersion: 1,
+    actionType: "whatsapp.group.send",
     token,
     delegationId: token,
     sourceEventId: identity.sourceEventId,
@@ -243,6 +247,7 @@ export function authorizeExplicitOwnerGroupReply(
     },
     ownerTriggerMessageId,
     ownerSenderId,
+    ownerE164: ownerSenderId,
     createdAt: now,
     expiresAt: now + GROUP_REPLY_ONCE_TTL_MS,
     maxSends: 1,
@@ -267,6 +272,23 @@ export function authorizeExplicitOwnerGroupReply(
   }
 
   params.msg.groupReplyOnce = authorization;
+  registerWhatsAppOutboundAuthorization({
+    authorizationClass: authorization.authorizationClass,
+    policyVersion: authorization.policyVersion,
+    actionType: authorization.actionType,
+    token: authorization.token,
+    ownerE164: authorization.ownerE164,
+    groupId: authorization.groupId,
+    chatId: authorization.chatId,
+    sourceEventId: authorization.sourceEventId,
+    createdAt: authorization.createdAt,
+    expiresAt: authorization.expiresAt,
+    maxSends: authorization.maxSends,
+    capability: "whatsapp.group.reply_once" as const,
+    ownerTriggerMessageId: authorization.ownerTriggerMessageId,
+    quotedMessageId: authorization.quotedMessageId,
+    targetParticipantId: authorization.target.participantId,
+  });
   return { status: "authorized", authorization };
 }
 

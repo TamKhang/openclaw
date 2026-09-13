@@ -1122,12 +1122,10 @@ describe("whatsapp inbound dispatch", () => {
         suppression: { reason: "cancelled_by_message_sending_hook" },
       },
     });
-    await expect(finalization).resolves.toMatchObject({ visibleReplySent: true });
-    expect(deliverReply).toHaveBeenCalledTimes(1);
-    expectReplyResultFields(deliverReply, {
-      mediaUrls: ["/tmp/a.jpg", "/tmp/b.jpg"],
-      text: undefined,
-    });
+    // No visible authorized delivery occurred, so deferred media must be
+    // suppressed rather than transmitted.
+    await expect(finalization).resolves.toMatchObject({ visibleReplySent: false });
+    expect(deliverReply).not.toHaveBeenCalled();
   });
 
   it("drops deferred media when its captioned replacement fails after becoming visible", async () => {
@@ -1481,7 +1479,7 @@ describe("whatsapp inbound dispatch", () => {
     expect(deliverReply).not.toHaveBeenCalled();
   });
 
-  it("reports deferred media visible only after an accepted flush", async () => {
+  it("suppresses deferred media when no visible final delivery occurs", async () => {
     deliverInboundReplyWithMessageSendContextMock.mockResolvedValueOnce({
       status: "handled_no_send",
       reason: "no_visible_result",
@@ -1505,16 +1503,14 @@ describe("whatsapp inbound dispatch", () => {
     await expect(deliver?.({ text: "cancelled final" }, { kind: "final" })).resolves.toMatchObject({
       visibleReplySent: false,
     });
-    await expect(deferred.finalization).resolves.toMatchObject({
-      visibleReplySent: true,
-      messageIds: ["wa-sent-1"],
-      content: "",
-      receipt: testReceipt(["wa-sent-1"]),
-    });
-    expect(deliverReply).toHaveBeenCalledTimes(1);
+
+    const settled = await getCapturedOnSettled()?.();
+    expect(settled).toMatchObject({ visibleReplySent: false });
+    await expect(deferred.finalization).resolves.toMatchObject({ visibleReplySent: false });
+    expect(deliverReply).not.toHaveBeenCalled();
   });
 
-  it("flushes deferred media through the settled delivery hook", async () => {
+  it("suppresses deferred media through the settled delivery hook", async () => {
     const deliverReply = vi.fn(async () => acceptedDeliveryResult());
     let settledResult: unknown;
     dispatchReplyWithBufferedBlockDispatcherMock.mockImplementationOnce(
@@ -1542,19 +1538,15 @@ describe("whatsapp inbound dispatch", () => {
       dispatchBufferedReply({
         deliverReply,
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
 
-    expect(settledResult).toMatchObject({ visibleReplySent: true });
+    expect(settledResult).toMatchObject({ visibleReplySent: false });
     expect(getCapturedOnSettled()).toBeTypeOf("function");
-    expect(deliverReply).toHaveBeenCalledTimes(1);
+    expect(deliverReply).not.toHaveBeenCalled();
   });
 
-  it("marks deferred media flush failures visible after an earlier accepted flush", async () => {
-    const error = new Error("second deferred media failed");
-    const deliverReply = vi
-      .fn()
-      .mockResolvedValueOnce(acceptedDeliveryResult())
-      .mockRejectedValueOnce(error);
+  it("suppresses deferred media batches when no visible delivery precedes settlement", async () => {
+    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
     let firstSettlement: Promise<{ status: "resolved"; value: unknown } | { status: "rejected" }>;
     let secondSettlement: Promise<{ status: "resolved" } | { status: "rejected"; error: unknown }>;
     let thirdSettlement: Promise<{ status: "resolved" } | { status: "rejected"; error: unknown }>;
@@ -1583,14 +1575,14 @@ describe("whatsapp inbound dispatch", () => {
           () => ({ status: "rejected" as const }),
         );
         secondSettlement = (second.finalization as Promise<unknown>).then(
-          () => ({ status: "resolved" as const }),
+          (value) => ({ status: "resolved" as const, value }),
           (settlementError: unknown) => ({
             status: "rejected" as const,
             error: settlementError,
           }),
         );
         thirdSettlement = (third.finalization as Promise<unknown>).then(
-          () => ({ status: "resolved" as const }),
+          (value) => ({ status: "resolved" as const, value }),
           (settlementError: unknown) => ({
             status: "rejected" as const,
             error: settlementError,
@@ -1604,28 +1596,20 @@ describe("whatsapp inbound dispatch", () => {
       },
     );
 
-    await expect(dispatchBufferedReply({ deliverReply })).rejects.toMatchObject({
-      sentBeforeError: true,
-      visibleReplySent: true,
-      cause: error,
-    });
-    expect(error).not.toHaveProperty("sentBeforeError");
-    expect(error).not.toHaveProperty("visibleReplySent");
+    await expect(dispatchBufferedReply({ deliverReply })).resolves.toBe(false);
     await expect(firstSettlement!).resolves.toMatchObject({
       status: "resolved",
-      value: { visibleReplySent: true },
+      value: { visibleReplySent: false },
     });
-    await expect(secondSettlement!).resolves.toEqual({ status: "rejected", error });
-    const third = await thirdSettlement!;
-    expect(third).toMatchObject({
-      status: "rejected",
-      error: { cause: error },
+    await expect(secondSettlement!).resolves.toMatchObject({
+      status: "resolved",
+      value: { visibleReplySent: false },
     });
-    if (third.status === "rejected") {
-      expect(third.error).not.toHaveProperty("sentBeforeError");
-      expect(third.error).not.toHaveProperty("visibleReplySent");
-    }
-    expect(deliverReply).toHaveBeenCalledTimes(2);
+    await expect(thirdSettlement!).resolves.toMatchObject({
+      status: "resolved",
+      value: { visibleReplySent: false },
+    });
+    expect(deliverReply).not.toHaveBeenCalled();
   });
 
   it("marks downstream failures visible after deferred media flushes", async () => {
@@ -1644,15 +1628,14 @@ describe("whatsapp inbound dispatch", () => {
     await expect(
       deliver?.({ text: "tool image", mediaUrls: ["/tmp/generated.jpg"] }, { kind: "tool" }),
     ).resolves.toMatchObject({ visibleReplySent: false });
-    await expect(deliver?.({ text: "final text" }, { kind: "final" })).rejects.toMatchObject({
+    // No media was transmitted before finalization, so a failed final must
+    // not be marked visible as a downstream-media side effect.
+    await expect(deliver?.({ text: "final text" }, { kind: "final" })).rejects.toBe(error);
+    expect(error).not.toMatchObject({
       sentBeforeError: true,
       visibleReplySent: true,
     });
-    expect(error).toMatchObject({
-      sentBeforeError: true,
-      visibleReplySent: true,
-    });
-    expect(deliverReply).toHaveBeenCalledTimes(1);
+    expect(deliverReply).not.toHaveBeenCalled();
   });
 
   it("marks durable partial send failures as visible before rethrowing", async () => {
@@ -2050,13 +2033,9 @@ describe("whatsapp inbound dispatch", () => {
         shouldClearGroupHistory: false,
         transport: buildWhatsAppInboundTransportContext(msg),
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
 
-    expect(deliverReply).toHaveBeenCalledTimes(1);
-    expectReplyResultFields(deliverReply, {
-      mediaUrls: ["/tmp/generated.jpg"],
-      text: undefined,
-    });
+    expect(deliverReply).not.toHaveBeenCalled();
   });
 
   it("passes sendComposing through as the reply typing callback", async () => {

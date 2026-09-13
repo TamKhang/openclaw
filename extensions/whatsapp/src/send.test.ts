@@ -1047,6 +1047,20 @@ describe("web outbound", () => {
     expect(sendPoll).not.toHaveBeenCalled();
   });
 
+  it.each(["123456789-987654321@g.us", "123456789@newsletter"])(
+    "fails closed for group/newsletter poll (%s)",
+    async (to) => {
+      await expect(
+        sendPollWhatsApp(
+          to,
+          { question: "Lunch?", options: ["Pizza", "Sushi"] },
+          { verbose: false, cfg: WHATSAPP_TEST_CFG },
+        ),
+      ).rejects.toThrow(/requires a trusted outbound authorization permit/);
+      expect(sendPoll).not.toHaveBeenCalled();
+    },
+  );
+
   it("redacts recipients and poll text in outbound logs", async () => {
     const logPath = path.join(os.tmpdir(), `openclaw-outbound-${crypto.randomUUID()}.log`);
     setLoggerOverride({ level: "trace", file: logPath });

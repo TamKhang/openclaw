@@ -137,6 +137,8 @@ type WhatsAppReplyDeliveryParams = {
   skipLog?: boolean;
   tableMode?: MarkdownTableMode;
   onMediaAccepted?: (mediaUrl: string) => void;
+  /** Invoked immediately before each actual WhatsApp transport transmission. */
+  assertAuthorizationBeforeSend?: () => void;
 };
 
 export async function deliverWebReply(
@@ -283,6 +285,7 @@ async function deliverWebReplyInActivityScope(
     for (const [index, chunk] of textChunks.entries()) {
       const chunkStarted = Date.now();
       const quote = getQuote();
+      params.assertAuthorizationBeforeSend?.();
       rememberSendResult(await sendWithRetry(() => transport.reply(chunk, quote), "text", "text"));
       if (!skipLog) {
         const durationMs = Date.now() - chunkStarted;
@@ -341,6 +344,7 @@ async function deliverWebReplyInActivityScope(
             : media.kind === "video"
               ? { video: media.buffer, caption }
               : { document: media.buffer, fileName: media.fileName, caption };
+      params.assertAuthorizationBeforeSend?.();
       rememberSendResult(
         await sendWithRetry(
           () => transport.sendMedia({ ...mediaContent, mimetype: media.mimetype }, quote),
@@ -351,6 +355,7 @@ async function deliverWebReplyInActivityScope(
         mediaUrl,
       );
       if (media.kind === "audio" && caption) {
+        params.assertAuthorizationBeforeSend?.();
         rememberSendResult(
           await sendWithRetry(() => transport.reply(caption, quote), "media:audio-text", "text"),
         );
@@ -386,6 +391,7 @@ async function deliverWebReplyInActivityScope(
         // Non-first media failures were silently dropped before. Notify the user
         // so they know a trailing attachment did not arrive.
         whatsappOutboundLog.warn(`Trailing media failed; sent warning to ${conversationId}`);
+        params.assertAuthorizationBeforeSend?.();
         rememberSendResult(
           await sendWithRetry(
             () => transport.reply("⚠️ Media unavailable.", getQuote()),
@@ -402,6 +408,7 @@ async function deliverWebReplyInActivityScope(
         return;
       }
       whatsappOutboundLog.warn(`Media skipped; sent text-only to ${conversationId}`);
+      params.assertAuthorizationBeforeSend?.();
       rememberSendResult(
         await sendWithRetry(
           () => transport.reply(fallbackText, getQuote()),
@@ -414,6 +421,7 @@ async function deliverWebReplyInActivityScope(
 
   // Remaining text chunks after media
   for (const chunk of remainingText) {
+    params.assertAuthorizationBeforeSend?.();
     rememberSendResult(
       await sendWithRetry(() => transport.reply(chunk, getQuote()), "media:text", "text"),
     );

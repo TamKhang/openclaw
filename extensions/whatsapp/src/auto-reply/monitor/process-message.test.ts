@@ -403,6 +403,55 @@ describe("processMessage group system prompt wiring", () => {
     );
   });
 
+  it("routes trusted owner_explicit_send to the exact resolved group target", async () => {
+    const account = makeAccount();
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(account),
+      configuredAllowFrom: ["+15550002222"],
+      dmAllowFrom: ["+15550002222"],
+    });
+    const msg = createTestWebInboundMessage({
+      event: { id: "msg1", timestamp: 1710000000 },
+      payload: { body: `send this to ${GROUP_JID}: anyone playing today?` },
+      platform: {
+        chatJid: "+15550002222@c.us",
+        recipientJid: "+15550001111",
+        senderJid: "15550002222@s.whatsapp.net",
+        senderE164: "+15550002222",
+        senderName: "Alice",
+        sendComposing: async () => {},
+        reply: async () => createAcceptedWhatsAppSendResult("text", "r1"),
+        sendMedia: async () => createAcceptedWhatsAppSendResult("media", "m1"),
+      },
+      admission: {
+        accountId: "default",
+        conversation: { kind: "direct", id: "+15550002222" },
+        sender: { id: "+15550002222" },
+        senderAccess: { reasonCode: "dm_policy_allowlisted" },
+      },
+    });
+
+    await callProcessMessage({ msg });
+
+    const plan = mockCallArg(replyPlanParamsMock, "createWhatsAppReplyPlan") as {
+      outboundDeliveryTarget?: string;
+      transport?: { chatJid?: string; conversationId?: string; conversationKind?: string };
+      context?: { OutboundGroupReplyAuthorization?: unknown };
+    };
+    expect(plan.outboundDeliveryTarget).toBe(GROUP_JID);
+    expect(plan.transport?.chatJid).toBe(GROUP_JID);
+    expect(plan.transport?.conversationId).toBe(GROUP_JID);
+    expect(plan.transport?.conversationKind).toBe("group");
+    expect(plan.context?.OutboundGroupReplyAuthorization).toMatchObject({
+      authorizationClass: "owner_explicit_send",
+      actionType: "whatsapp.group.send",
+      groupId: GROUP_JID,
+      chatId: GROUP_JID,
+      ownerE164: "+15550002222",
+      maxSends: 1,
+    });
+  });
+
   it("passes pending group history from the history window into inbound context", async () => {
     resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
     const groupHistories = new Map<string, unknown[]>([

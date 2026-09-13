@@ -173,6 +173,15 @@ export type DeliverOutboundPayloadsCoreParams = {
   executionIdentityToken?: ExecutionIdentityAdmissionToken;
   /** @internal Replay-safe owner-delegated group-reply authorization evidence. */
   outboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
+  /**
+   * Trusted runtime marker set only by channel/command admission for genuine
+   * non-model command/system responses. Never derived from message text, model
+   * output, tool absence, or footer text. Threaded to `message_sending` so the
+   * enforcement hook can skip mandatory provenance for exempt replies.
+   */
+  provenanceExempt?: boolean;
+  /** Trusted originating owner request identity bound to the authorization. */
+  outboundAuthorizationOriginEventId?: string;
   /** @internal Canonical post-policy batch used by queue recovery and physical delivery. */
   preparedBatch?: PreparedOutboundBatch;
   reply?: OutboundReplyFacts;

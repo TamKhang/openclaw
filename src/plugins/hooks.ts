@@ -215,6 +215,8 @@ type ModifyingHookPolicy<K extends PluginHookName, TResult> = {
     result: TResult | undefined;
   }) => void;
   onHandlerError?: (hook: PluginHookRegistration<K>, failOpen: boolean) => void;
+  /** Fail closed for this single dispatch, overriding the hook-level fail-open default. */
+  failClosed?: boolean;
 };
 
 type PluginTargetedInboundClaimOutcome =
@@ -644,9 +646,10 @@ export function createHookRunner(
     hookName: PluginHookName;
     pluginId: string;
     error: unknown;
+    failClosed?: boolean;
   }): never | void => {
     const msg = `[hooks] ${params.hookName} handler from ${params.pluginId} failed: ${formatHookErrorForLog(params.error)}`;
-    if (shouldCatchHookErrors(params.hookName)) {
+    if (!params.failClosed && shouldCatchHookErrors(params.hookName)) {
       logger?.error(msg);
       return;
     }
@@ -885,12 +888,14 @@ export function createHookRunner(
           }
         }
       } catch (err) {
-        const failOpen = !(err instanceof HookIsolationError) && shouldCatchHookErrors(hookName);
+        const failClosed = policy.failClosed === true;
+        const failOpen =
+          !(err instanceof HookIsolationError) && !failClosed && shouldCatchHookErrors(hookName);
         policy.onHandlerError?.(hook, failOpen);
         if (err instanceof HookIsolationError) {
           throw err;
         }
-        handleHookError({ hookName, pluginId: hook.pluginId, error: err });
+        handleHookError({ hookName, pluginId: hook.pluginId, error: err, failClosed });
       }
       policy.assertHandlerBoundaryActive?.();
       if (shouldStop) {
@@ -1358,6 +1363,7 @@ export function createHookRunner(
   async function runMessageSending(
     event: PluginHookMessageSendingEvent,
     ctx: PluginHookMessageContext,
+    runOptions?: { failClosedOnError?: boolean },
   ): Promise<PluginHookMessageSendingResult | undefined> {
     return runModifyingHook<"message_sending", PluginHookMessageSendingResult>(
       "message_sending",
@@ -1377,6 +1383,7 @@ export function createHookRunner(
         },
         shouldStop: (result) => result.cancel === true,
         terminalLabel: "cancel=true",
+        failClosed: runOptions?.failClosedOnError === true,
       },
     );
   }

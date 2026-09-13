@@ -1,9 +1,11 @@
 // Whatsapp plugin module implements channel react action behavior.
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
-import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
+import { jsonResult, ToolAuthorizationError } from "openclaw/plugin-sdk/channel-actions";
 import { canonicalizeBase64, estimateBase64DecodedBytes } from "openclaw/plugin-sdk/media-runtime";
+import { claimWhatsAppOutboundAuthorizationForTransport } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
 import {
   isWhatsAppGroupJid,
+  isWhatsAppNewsletterJid,
   resolveAuthorizedWhatsAppOutboundTarget,
   resolveWhatsAppAccount,
   resolveWhatsAppMediaMaxBytes,
@@ -117,6 +119,30 @@ function decodeUploadFileMediaPayload(params: {
   };
 }
 
+/**
+ * The model-visible upload-file action cannot receive a trusted
+ * owner_explicit_send / delegated_group_reply permit, so group and
+ * newsletter-like broadcast destinations must fail closed before any physical
+ * transmission. Direct/DM uploads keep their existing allowFrom behavior.
+ */
+function assertWhatsAppUploadFileGroupTransportAuthorized(to: string): void {
+  if (!isWhatsAppGroupJid(to) && !isWhatsAppNewsletterJid(to)) {
+    return;
+  }
+  const decision = claimWhatsAppOutboundAuthorizationForTransport({
+    to,
+    channel: "whatsapp",
+    authorization: undefined,
+    originEventId: undefined,
+  });
+  const denied = isWhatsAppNewsletterJid(to) || decision.status === "denied";
+  if (denied) {
+    throw new ToolAuthorizationError(
+      `WhatsApp upload-file to ${to} requires a trusted outbound authorization permit; model-visible upload-file cannot mint one.`,
+    );
+  }
+}
+
 async function handleWhatsAppUploadFileAction(params: WhatsAppMessageActionParams) {
   const mediaUrl = readUploadFileMediaSource(params.params);
   const encodedPayload = readStringParam(params.params, "buffer", { trim: false });
@@ -137,6 +163,7 @@ async function handleWhatsAppUploadFileAction(params: WhatsAppMessageActionParam
     accountId: params.accountId ?? undefined,
     actionLabel: "upload-file",
   });
+  assertWhatsAppUploadFileGroupTransportAuthorized(resolved.to);
   const account = resolveWhatsAppAccount({
     cfg: params.cfg,
     accountId: resolved.accountId,

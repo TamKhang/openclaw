@@ -3,7 +3,6 @@ import { resolveChunkMode, resolveTextChunkLimit } from "../../auto-reply/chunk.
 import { payloadRequiresDurablePayloadTransport } from "../../channels/message/capabilities.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
-import type { PluginHookOutboundGroupReplyAuthorization } from "../../plugins/hook-message.types.js";
 import { getOrCreatePromise } from "../../shared/lazy-promise.js";
 import { diagnosticErrorCategory } from "../diagnostic-error-metadata.js";
 import {
@@ -44,38 +43,35 @@ import {
   preparedOutboundSuppressionOutcomes,
 } from "./prepared-batch.js";
 import { createReplyToDeliveryPolicy } from "./reply-policy.js";
+import {
+  assertWhatsAppOutboundTransportAuthorized,
+  validateWhatsAppOutboundAuthorization,
+} from "./whatsapp-outbound-authorization.js";
 
 const log = createSubsystemLogger("outbound/deliver");
 
+/**
+ * Validate a present outbound authorization marker against the exact target.
+ * This is the strict present-marker validator; the fail-closed group gate is
+ * {@link assertWhatsAppOutboundTransportAuthorized}, invoked by the delivery
+ * core immediately before transport transmission.
+ */
 export function assertOutboundGroupReplyAuthorization(params: {
   to: string;
   channel: string;
-  authorization?: PluginHookOutboundGroupReplyAuthorization;
+  authorization?: unknown;
+  now?: number;
 }): void {
-  const auth = params.authorization;
-  if (!auth) {
+  if (params.authorization === undefined) {
     return;
   }
-  const fields = {
-    capability: auth.capability,
-    token: auth.token,
-    groupId: auth.groupId,
-    chatId: auth.chatId,
-    ownerTriggerMessageId: auth.ownerTriggerMessageId,
-    quotedMessageId: auth.quotedMessageId,
-    targetParticipantId: auth.targetParticipantId,
-  } as const;
-  const malformed = Object.entries(fields).some(
-    ([, value]) => typeof value !== "string" || value.trim().length === 0,
-  );
-  if (malformed || fields.capability !== "whatsapp.group.reply_once") {
-    throw new Error("invalid outbound group reply authorization");
-  }
-  if (params.channel !== "whatsapp") {
-    throw new Error("outbound group reply authorization is only valid for whatsapp");
-  }
-  if (fields.chatId !== params.to && fields.groupId !== params.to) {
-    throw new Error("outbound group reply authorization target mismatch");
+  const decision = validateWhatsAppOutboundAuthorization(params.authorization, {
+    to: params.to,
+    channel: params.channel,
+    now: params.now,
+  });
+  if (decision.status === "denied") {
+    throw new Error(`invalid outbound group reply authorization: ${decision.reasonCode}`);
   }
 }
 
@@ -87,11 +83,6 @@ export async function deliverOutboundPayloadsCore(
   if (!preparedBatch) {
     throw new Error("Outbound delivery requires a prepared payload batch");
   }
-  assertOutboundGroupReplyAuthorization({
-    to,
-    channel,
-    authorization: params.outboundGroupReplyAuthorization,
-  });
   const accountId = params.accountId;
   const reply = params.reply;
   const deps = params.deps;
@@ -192,6 +183,19 @@ export async function deliverOutboundPayloadsCore(
     reply,
   });
 
+  // WhatsApp group transport one-shot gate. Each actual transmission claims
+  // the permit immediately before that send. A second payload/chunk/media send
+  // with the same permit therefore fails with consumed_permit before it can
+  // reach the adapter.
+  const assertGroupAuthorizationBeforeTransport = (): void => {
+    assertWhatsAppOutboundTransportAuthorized({
+      to,
+      channel,
+      authorization: params.outboundGroupReplyAuthorization,
+      originEventId: params.outboundAuthorizationOriginEventId,
+    });
+  };
+
   const sendTextChunks = async (
     sendHandler: ChannelHandler,
     text: string,
@@ -216,6 +220,7 @@ export async function deliverOutboundPayloadsCore(
         continue;
       }
       throwIfAborted(abortSignal);
+      assertGroupAuthorizationBeforeTransport();
       const resultIndex = results.length;
       await recordIdentifiedDeliveryResult(
         await sendHandler.sendText(unit.text, withPreparedTarget(unit.overrides)),
@@ -224,6 +229,7 @@ export async function deliverOutboundPayloadsCore(
     }
   };
   const acceptedEntries = acceptedPreparedOutboundEntries(preparedBatch);
+
   const payloadOutcomes: OutboundPayloadDeliveryOutcome[] = [
     ...preparedOutboundSuppressionOutcomes(preparedBatch),
   ];
@@ -406,6 +412,7 @@ export async function deliverOutboundPayloadsCore(
           sendTextOnlyErrorPayloads: deliveryHandler.sendTextOnlyErrorPayloads,
         })
       ) {
+        assertGroupAuthorizationBeforeTransport();
         const delivery = await deliveryHandler.sendPayload(
           effectivePayload,
           withPreparedTarget(applySendReplyToConsumption(sendOverrides)),
@@ -425,6 +432,7 @@ export async function deliverOutboundPayloadsCore(
         }
       } else if (payloadSummary.mediaUrls.length === 0) {
         if (deliveryHandler.sendFormattedText) {
+          assertGroupAuthorizationBeforeTransport();
           await recordIdentifiedDeliveryResults(
             await deliveryHandler.sendFormattedText(
               payloadSummary.text,
@@ -468,6 +476,7 @@ export async function deliverOutboundPayloadsCore(
             continue;
           }
           throwIfAborted(abortSignal);
+          assertGroupAuthorizationBeforeTransport();
           const resultIndex = results.length;
           const delivery = await sendMedia(
             unit.caption ?? "",

@@ -214,6 +214,7 @@ type ChannelTurnDurableDeliveryOptions = Pick<
   | "silent"
   | "threadId"
   | "outboundGroupReplyAuthorization"
+  | "outboundAuthorizationOriginEventId"
 > & {
   to?: string | null;
   replyToId?: string | null;

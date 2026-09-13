@@ -16,6 +16,7 @@ import {
 import { buildInboundHistoryFromEntries } from "openclaw/plugin-sdk/reply-history";
 import type { FinalizedMsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { claimWhatsAppOutboundAuthorizationForTransport } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
 import {
   requireWhatsAppInboundAdmission,
   resolveWhatsAppAdmissionChannelIngress,
@@ -343,6 +344,16 @@ function createWhatsAppMediaOnlyReplyCoalescer(params: {
       return flushResult;
     },
     flushAll: () => flushWhere(() => true),
+    settlePendingAsSuppressed(): WhatsAppMediaOnlyFlushResult {
+      const suppressed: WhatsAppMediaOnlyFlushResult = {
+        delivered: 0,
+        droppedDuplicateMedia: 0,
+      };
+      for (const pending of pendingMediaOnlyPayloads.splice(0)) {
+        pending.resolveFinalization(whatsAppReplyDeliveryVisibility(false));
+      }
+      return suppressed;
+    },
   };
 }
 
@@ -635,6 +646,7 @@ export function createWhatsAppReplyPlan(params: {
     skipLog?: boolean;
     tableMode?: ReturnType<typeof resolveMarkdownTableMode>;
     onMediaAccepted?: (mediaUrl: string) => void;
+    assertAuthorizationBeforeSend?: () => void;
   }) => Promise<WhatsAppReplyDeliveryResult>;
   groupHistories: Map<string, GroupHistoryEntry[]>;
   groupHistoryKey: string;
@@ -649,11 +661,13 @@ export function createWhatsAppReplyPlan(params: {
   shouldClearGroupHistory: boolean;
   statusReactionController?: StatusReactionController | null;
   transport: WhatsAppInboundTransportContext;
+  /** Owner-explicit-send resolved group target; overrides the DM reply route. */
+  outboundDeliveryTarget?: string;
   turnAdoptionLifecycle?: NonNullable<
     NonNullable<ChannelInboundTurnPlan["replyOptions"]>["turnAdoptionLifecycle"]
   >;
 }) {
-  const conversationId = params.inbound.conversation.id;
+  const conversationId = params.outboundDeliveryTarget ?? params.inbound.conversation.id;
   const statusReactionController = params.statusReactionController ?? null;
   const textLimit = params.maxMediaTextChunkLimit ?? resolveTextChunkLimit(params.cfg, "whatsapp");
   const chunkMode = resolveChunkMode(params.cfg, "whatsapp", params.route.accountId);
@@ -713,6 +727,34 @@ export function createWhatsAppReplyPlan(params: {
     }
     return true;
   };
+  const claimOutboundAuthorizationForDelivery = (): boolean => {
+    const authorization = params.context.OutboundGroupReplyAuthorization;
+    if (!authorization) {
+      return true;
+    }
+    if (authorization.authorizationClass === "delegated_group_reply") {
+      return claimExplicitOwnerReplyDeliveryAllowed();
+    }
+    if (authorization.authorizationClass === "owner_explicit_send") {
+      const decision = claimWhatsAppOutboundAuthorizationForTransport({
+        to: params.transport.chatJid,
+        channel: "whatsapp",
+        authorization,
+        originEventId: authorization.sourceEventId,
+      });
+      if (decision.status === "authorized" || decision.status === "not_required") {
+        return true;
+      }
+      params.replyLogger.warn({ decision, conversationId }, "owner explicit send delivery denied");
+      return false;
+    }
+    return false;
+  };
+  const assertOutboundAuthorizationForTransportSend = (): void => {
+    if (!claimOutboundAuthorizationForDelivery()) {
+      throw new Error("whatsapp group outbound denied: consumed_permit");
+    }
+  };
   const prepareAuthoritativeGroupReplyPayload = (
     payload: DeliverableWhatsAppOutboundPayload<ReplyPayload>,
   ): DeliverableWhatsAppOutboundPayload<ReplyPayload> => {
@@ -745,11 +787,10 @@ export function createWhatsAppReplyPlan(params: {
     info: ReplyDeliveryInfo,
     options?: { recordDelivery?: boolean; onMediaAccepted?: (mediaUrl: string) => void },
   ): Promise<WhatsAppReplyDeliveryVisibility> => {
-    const authoritativeDeliveryPayload =
-      prepareAuthoritativeGroupReplyPayload(normalizedDeliveryPayload);
-    if (!claimExplicitOwnerReplyDeliveryAllowed()) {
-      return whatsAppReplyDeliveryVisibility(false);
-    }
+    const targetPayload = params.outboundDeliveryTarget
+      ? { ...normalizedDeliveryPayload, replyToId: undefined }
+      : normalizedDeliveryPayload;
+    const authoritativeDeliveryPayload = prepareAuthoritativeGroupReplyPayload(targetPayload);
     const reply = resolveSendableOutboundReplyParts(authoritativeDeliveryPayload);
     if (!reply.hasMedia && !reply.text.trim()) {
       return whatsAppReplyDeliveryVisibility(false);
@@ -769,6 +810,7 @@ export function createWhatsAppReplyPlan(params: {
         skipLog: false,
         tableMode,
         onMediaAccepted: options?.onMediaAccepted,
+        assertAuthorizationBeforeSend: assertOutboundAuthorizationForTransportSend,
       });
     } catch (error: unknown) {
       if (isWhatsAppVisibleDeliveryError(error) && !isChannelPartialDeliveryError(error)) {
@@ -819,6 +861,12 @@ export function createWhatsAppReplyPlan(params: {
       }
     },
     onSettled: async () => {
+      if (!didSendReply) {
+        // No payload crossed the provenance/policy boundary and became
+        // visible. Suppress pending deferred media without transmitting it.
+        mediaOnlyCoalescer.settlePendingAsSuppressed();
+        return whatsAppReplyDeliveryVisibility(false);
+      }
       const flushResult = await mediaOnlyCoalescer.flushAll();
       logWhatsAppMediaOnlyFlushResult(flushResult);
       return whatsAppReplyDeliveryVisibility(didSendReply || flushResult.delivered > 0);
@@ -835,22 +883,9 @@ export function createWhatsAppReplyPlan(params: {
       const normalizedOutboundPayload = normalizeWhatsAppOutboundPayload(deliveryPayload, {
         normalizeText: normalizeWhatsAppPayloadTextPreservingIndentation,
       });
-      const normalizedDeliveryPayload =
-        deliveryPayload.text === undefined
-          ? { ...normalizedOutboundPayload, text: undefined }
-          : normalizedOutboundPayload;
-      const reply = resolveSendableOutboundReplyParts(normalizedDeliveryPayload);
-      if (!reply.hasMedia && !reply.text.trim()) {
-        return normalizedDeliveryPayload;
-      }
-      const mediaUrls = new Set(normalizedDeliveryPayload.mediaUrls);
-      const flushResult = reply.hasMedia
-        ? shouldDeferWhatsAppMediaOnlyPayload({ info, mediaUrls, reply })
-          ? { delivered: 0, droppedDuplicateMedia: 0 }
-          : await mediaOnlyCoalescer.flushNonDuplicateMedia(mediaUrls)
-        : await mediaOnlyCoalescer.flushAll();
-      logWhatsAppMediaOnlyFlushResult(flushResult);
-      return normalizedDeliveryPayload;
+      return deliveryPayload.text === undefined
+        ? { ...normalizedOutboundPayload, text: undefined }
+        : normalizedOutboundPayload;
     },
     durable: (payload, info) => {
       const reply = resolveSendableOutboundReplyParts(payload);
@@ -859,12 +894,14 @@ export function createWhatsAppReplyPlan(params: {
       }
       return {
         to: conversationId,
-        replyToId: resolveWhatsAppDurableReplyToId({
-          context: params.context,
-          info,
-          currentMessageId: params.transport.correlationId,
-          payload,
-        }),
+        replyToId: params.outboundDeliveryTarget
+          ? null
+          : resolveWhatsAppDurableReplyToId({
+              context: params.context,
+              info,
+              currentMessageId: params.transport.correlationId,
+              payload,
+            }),
         outboundGroupReplyAuthorization: params.context.OutboundGroupReplyAuthorization,
         formatting: {
           textLimit,
