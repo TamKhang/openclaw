@@ -63,9 +63,10 @@ function extractSendDirective(body: string): { destination: string; instruction:
     return null;
   }
 
-  // "send this to <dest>: rest" / "send to <dest> rest" / "ask <dest> rest"
+  // "send this message to <dest>: rest" / "send this to <dest>: rest" /
+  // "send a message to <dest> rest" / "ask <dest> rest"
   const match =
-    /^(?:send(?:\s+this|\s+a\s+message|\s+the\s+following)?(?:\s+to)?|ask|message|tell|text|dm|contact)\s+(.+)$/i.exec(
+    /^(?:send(?:\s+this(?:\s+message)?|\s+a\s+message|\s+the\s+following)?(?:\s+to)?|ask|message|tell|text|dm|contact)\s+(.+)$/i.exec(
       trimmed,
     );
   if (!match) {

@@ -3,6 +3,7 @@ import {
   isWhatsAppAuthorizationRegistered,
 } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
 import { beforeEach, describe, expect, it } from "vitest";
+import { hashWhatsAppSourceEventId } from "../../inbound/inbound-event-identity.js";
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import {
@@ -65,6 +66,46 @@ describe("authorizeOwnerExplicitSend", () => {
     });
   });
 
+  it("parses 'send this message to <destination>' and binds the permit to the configured group", () => {
+    const cfg = {
+      channels: {
+        whatsapp: {
+          groups: { [GROUP_JID]: { name: "3C Castle Hill" } },
+        },
+      },
+    } as never;
+    const result = authorize(
+      "Send this message to 3C Castle Hill: Bruno authorization test — explicit owner send.",
+      cfg,
+    );
+    expect(result.status).toBe("authorized");
+    if (result.status !== "authorized") {
+      return;
+    }
+    expect(resolveExplicitSendDestination("3C Castle Hill", cfg)).toBe(GROUP_JID);
+    expect(result.authorization).toMatchObject({
+      authorizationClass: "owner_explicit_send",
+      policyVersion: 1,
+      actionType: "whatsapp.group.send",
+      ownerE164: OWNER_E164,
+      groupId: GROUP_JID,
+      chatId: GROUP_JID,
+      createdAt: NOW,
+      expiresAt: NOW + OWNER_EXPLICIT_SEND_TTL_MS,
+      maxSends: 1,
+    });
+    expect(result.authorization.groupId).toBe(GROUP_JID);
+    expect(result.authorization.chatId).toBe(GROUP_JID);
+    expect(result.authorization.maxSends).toBe(1);
+    expect(result.authorization.sourceEventId).toBe(
+      hashWhatsAppSourceEventId({
+        accountId: "default",
+        remoteJid: OWNER_E164,
+        messageId: "owner-dm-1",
+      }),
+    );
+  });
+
   it("enforces the 5-minute owner_explicit_send TTL", () => {
     expect(OWNER_EXPLICIT_SEND_TTL_MS).toBe(300_000);
   });
@@ -91,6 +132,10 @@ describe("authorizeOwnerExplicitSend", () => {
     expect(authorize("Find out who is playing using all sources", {} as never).status).toBe(
       "not_explicit_send",
     );
+    expect(
+      authorize("Check 3C Castle Hill and tell me what they are talking about.", {} as never)
+        .status,
+    ).toBe("not_explicit_send");
   });
 
   it("denies a non-owner explicit send directive", () => {
