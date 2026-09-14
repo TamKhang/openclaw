@@ -490,6 +490,13 @@ async function dispatchChannelTurnWithDeliveryOwner(
                     });
                   },
                   deliver: async (payload: ReplyPayload, info: ChannelDeliveryInfo) => {
+                    // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+                    // source-reply-policy investigation. Final-payload structural facts only.
+                    const diagFinal = (facts: string): void => {
+                      if (info.kind === "final" && params.channel === "whatsapp") {
+                        console.log(`[come-in-policy-diag] ${facts}`);
+                      }
+                    };
                     const preparedPayloadResult = delivery.preparePayload
                       ? await delivery.preparePayload(payload, info)
                       : payload;
@@ -515,7 +522,9 @@ async function dispatchChannelTurnWithDeliveryOwner(
                       typeof declaredDurable === "function"
                         ? await declaredDurable(preparedPayload, info)
                         : declaredDurable;
+                    diagFinal(`durableConfigured=${durableOptions ? "true" : "false"}`);
                     if (durableOptions) {
+                      diagFinal("durableEntered=true");
                       const durable = await deliverInboundReplyWithMessageSendContextCore({
                         cfg: params.cfg,
                         channel: params.channel,
@@ -527,6 +536,15 @@ async function dispatchChannelTurnWithDeliveryOwner(
                         executionIdentityToken: agentRun[1],
                         ...durableOptions,
                       });
+                      diagFinal(`durableStatus=${durable.status}`);
+                      if (
+                        durable.status === "handled_no_send" &&
+                        durable.delivery.suppression?.reason
+                      ) {
+                        diagFinal(
+                          `durableSuppressionReason=${durable.delivery.suppression.reason}`,
+                        );
+                      }
                       throwIfDurableInboundReplyDeliveryFailed(durable);
                       if (isDurableInboundReplyDeliveryHandled(durable)) {
                         // Durable sends emit canonical message_sent after outbound hooks settle.
@@ -538,6 +556,7 @@ async function dispatchChannelTurnWithDeliveryOwner(
                         });
                         return durable.delivery;
                       }
+                      diagFinal("directFallbackEntered=true");
                     }
                     let effectivePayload = preparedPayload;
                     let result: ChannelDeliveryResult | void = undefined;
@@ -563,6 +582,7 @@ async function dispatchChannelTurnWithDeliveryOwner(
                           ownership === "routed-delivery" &&
                           params.admission?.kind !== "observeOnly"
                         ) {
+                          diagFinal("routedMessageSendingEntered=true");
                           const hook = await applyRoutedDirectMessageSending({
                             turn: params as RoutedAssembledChannelTurn,
                             payload: effectivePayload,
@@ -570,6 +590,12 @@ async function dispatchChannelTurnWithDeliveryOwner(
                           effectivePayload = hook.payload;
                           if (hook.suppression) {
                             result = hook.suppression;
+                            if (
+                              hook.suppression.suppression?.reason ===
+                              "cancelled_by_message_sending_hook"
+                            ) {
+                              diagFinal("routedMessageSendingCancelled=true");
+                            }
                           }
                         }
                         if (!result) {
@@ -583,6 +609,7 @@ async function dispatchChannelTurnWithDeliveryOwner(
                             params.storePath,
                           );
                           await custody?.onPlatformSendDispatch();
+                          diagFinal("directChannelDeliverEntered=true");
                           result = await delivery.deliver(
                             effectivePayload,
                             toCoreManagedDeliveryInfo(info),

@@ -1170,6 +1170,83 @@ describe("deliverOutboundPayloads", () => {
     expect(hookMocks.runner.runMessageSending).not.toHaveBeenCalled();
   });
 
+  it("logs content-free WhatsApp batch preparation diagnostics without changing preparation", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      setTestOutbound(
+        { sendText: async () => ({ channel: "whatsapp", messageId: "unused" }) },
+        "whatsapp",
+      );
+
+      const batch = await prepareOutboundPayloadBatch({
+        cfg: {},
+        channel: "whatsapp",
+        to: "123456789-111111@g.us",
+        payloads: [{ text: "unchanged" }],
+        deps: { whatsapp: vi.fn() },
+      });
+
+      expect(batch.entries).toEqual([
+        expect.objectContaining({ status: "accepted", payload: { text: "unchanged" } }),
+      ]);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] normalizedPayloadCount=1");
+      expect(logged).toContain("[come-in-policy-diag] messageSendingHookAvailable=false");
+      expect(logged).toContain(
+        "[come-in-policy-diag] outboundGroupReplyAuthorizationPresent=false",
+      );
+      expect(logged).toContain("[come-in-policy-diag] replyPayloadHookCancelled=false");
+      expect(logged).toContain("[come-in-policy-diag] messageSendingHookCancelled=false");
+      expect(logged).toContain("[come-in-policy-diag] preparedEntryStatus=accepted");
+      expect(logged).toContain("[come-in-policy-diag] acceptedPayloadCount=1");
+      expect(logged).not.toContain("[come-in-policy-diag] preparedSuppressionReason=");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs structural message-hook suppression without changing suppression outcome", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      setTestOutbound(
+        { sendText: async () => ({ channel: "whatsapp", messageId: "unused" }) },
+        "whatsapp",
+      );
+      hookMocks.runner.hasHooks.mockImplementation((name?: string) => name === "message_sending");
+      hookMocks.runner.runMessageSending.mockResolvedValueOnce({
+        cancel: true,
+        cancelReason: "policy",
+        metadata: { source: "test" },
+      });
+
+      const batch = await prepareOutboundPayloadBatch({
+        cfg: {},
+        channel: "whatsapp",
+        to: "123456789-111111@g.us",
+        payloads: [{ text: "blocked" }],
+        deps: { whatsapp: vi.fn() },
+      });
+
+      expect(batch.entries).toEqual([
+        expect.objectContaining({
+          status: "suppressed",
+          reason: "cancelled_by_message_sending_hook",
+        }),
+      ]);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] messageSendingHookAvailable=true");
+      expect(logged).toContain("[come-in-policy-diag] messageSendingHookCancelled=true");
+      expect(logged).toContain("[come-in-policy-diag] preparedEntryStatus=suppressed");
+      expect(logged).toContain(
+        "[come-in-policy-diag] preparedSuppressionReason=cancelled_by_message_sending_hook",
+      );
+      expect(logged).toContain("[come-in-policy-diag] acceptedPayloadCount=0");
+      // Hook-authored cancel reasons are not structural: keep them out of diagnostics.
+      expect(logged).not.toContain("[come-in-policy-diag] messageSendingCancelReason=");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
   it("revalidates conversation authority after queue admission and before the adapter", async () => {
     const order: string[] = [];
     queueMocks.enqueueDelivery.mockImplementationOnce(async () => {

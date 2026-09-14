@@ -418,6 +418,14 @@ export async function withDurableMessageSendContextCore<T>(
 export async function sendDurableMessageBatchCore(
   params: DurableMessageSendContextParams,
 ): Promise<DurableMessageBatchSendResult> {
+  // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+  // source-reply-policy investigation. Durable-send structural facts only.
+  const diag = (facts: string): void => {
+    if (params.channel === "whatsapp") {
+      console.log(`[come-in-policy-diag] ${facts}`);
+    }
+  };
+  diag("durableSendEntered=true");
   const pendingFinalCompletion = params.deliveryCompletion
     ? undefined
     : resolvePendingFinalDeliveryCompletion(params.payloads);
@@ -462,6 +470,15 @@ export async function sendDurableMessageBatchCore(
     async (ctx) => {
       const rendered = await ctx.render();
       const result = await ctx.send(rendered);
+      diag(`durableSendStatus=${result.status}`);
+      const outboundResultCount = "results" in result ? result.results.length : 0;
+      diag(`outboundResultCount=${outboundResultCount}`);
+      for (const outcome of result.payloadOutcomes ?? []) {
+        diag(`payloadOutcomeStatus=${outcome.status}`);
+        if (outcome.status === "suppressed") {
+          diag(`payloadSuppressionReason=${outcome.reason}`);
+        }
+      }
       if (result.status === "sent" || result.status === "suppressed") {
         await ctx.commit(result.receipt);
       } else {

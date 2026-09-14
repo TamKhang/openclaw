@@ -135,6 +135,14 @@ export async function prepareOutboundPayloadBatch(
   });
   const handler = await createPreparationHandler(params);
   const normalized = normalizePayloadsForChannelDelivery(plan, handler);
+  // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+  // source-reply-policy investigation. Structural batch facts only.
+  const diag = (facts: string): void => {
+    if (params.channel === "whatsapp") {
+      console.log(`[come-in-policy-diag] ${facts}`);
+    }
+  };
+  diag(`normalizedPayloadCount=${normalized.length}`);
   const normalizedIndexes = new Set(normalized.map((entry) => entry.index));
   const entries: PreparedOutboundBatchEntry[] = [];
   for (const [sourceIndex] of params.payloads.entries()) {
@@ -148,6 +156,8 @@ export async function prepareOutboundPayloadBatch(
     params.replyPayloadSendingHook !== undefined &&
     (hookRunner?.hasHooks("reply_payload_sending") ?? false);
   const hasMessageSendingHooks = hookRunner?.hasHooks("message_sending") ?? false;
+  diag(`messageSendingHookAvailable=${hasMessageSendingHooks}`);
+  diag(`outboundGroupReplyAuthorizationPresent=${params.outboundGroupReplyAuthorization != null}`);
   const hasModifyingHooks = hasReplyPayloadSendingHooks || hasMessageSendingHooks;
   const { resolveCurrentReplyTo } = createReplyToDeliveryPolicy(params);
   const sessionKeyForHooks = params.mirror?.sessionKey ?? params.session?.key;
@@ -169,6 +179,7 @@ export async function prepareOutboundPayloadBatch(
       throw new OutboundPayloadPreparationError(error, sourceIndex, payload);
     }
     throwIfPreparationAborted(params.abortSignal, sourceIndex, replyHookResult.payload);
+    diag(`replyPayloadHookCancelled=${replyHookResult.cancelled}`);
     if (replyHookResult.cancelled) {
       entries.push({
         sourceIndex,
@@ -201,7 +212,16 @@ export async function prepareOutboundPayloadBatch(
       throw new OutboundPayloadPreparationError(error, sourceIndex, replyPayload);
     }
     throwIfPreparationAborted(params.abortSignal, sourceIndex, messageHookResult.payload);
+    diag(`messageSendingHookCancelled=${messageHookResult.cancelled}`);
     if (messageHookResult.cancelled) {
+      const structuralCancelReason =
+        messageHookResult.cancelReason === "provenance_enforcement_unavailable" ||
+        messageHookResult.cancelReason === "provenance_enforcement_failed"
+          ? messageHookResult.cancelReason
+          : undefined;
+      if (structuralCancelReason) {
+        diag(`messageSendingCancelReason=${structuralCancelReason}`);
+      }
       const hookEffect =
         messageHookResult.cancelReason || messageHookResult.hookMetadata
           ? {
@@ -254,6 +274,15 @@ export async function prepareOutboundPayloadBatch(
       preparedMediaCount: buildPayloadSummary(compactPayload).mediaUrls.length,
     });
   }
+
+  const acceptedPayloadCount = entries.filter((entry) => entry.status === "accepted").length;
+  for (const entry of entries) {
+    diag(`preparedEntryStatus=${entry.status}`);
+    if (entry.status === "suppressed") {
+      diag(`preparedSuppressionReason=${entry.reason}`);
+    }
+  }
+  diag(`acceptedPayloadCount=${acceptedPayloadCount}`);
 
   return {
     schemaVersion: PREPARED_OUTBOUND_BATCH_SCHEMA_VERSION,

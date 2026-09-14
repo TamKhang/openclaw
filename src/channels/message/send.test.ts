@@ -753,4 +753,72 @@ describe("withDurableMessageSendContext", () => {
     expect(result).toEqual({ status: "failed", error });
     expect(onSendFailure).toHaveBeenCalledWith(error);
   });
+
+  it("logs content-free WhatsApp durable-send diagnostics without changing the sent result", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      deliverOutboundPayloads.mockImplementationOnce(
+        async (params: DeliveryIntentCallbackParams) => {
+          params.onPayloadDeliveryOutcome?.({
+            index: 0,
+            status: "sent",
+            results: [{ channel: "whatsapp", messageId: "wa-1" }],
+          });
+          return [{ channel: "whatsapp", messageId: "wa-1" }];
+        },
+      );
+
+      const result = await sendDurableMessageBatch({
+        cfg,
+        channel: "whatsapp",
+        to: "123456789-111111@g.us",
+        payloads: [{ text: "hello" }],
+      });
+
+      expectBatchStatus(result, "sent");
+      expect(result.results).toEqual([{ channel: "whatsapp", messageId: "wa-1" }]);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] durableSendEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] durableSendStatus=sent");
+      expect(logged).toContain("[come-in-policy-diag] outboundResultCount=1");
+      expect(logged).toContain("[come-in-policy-diag] payloadOutcomeStatus=sent");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs content-free WhatsApp durable-send suppression without changing the result", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      deliverOutboundPayloads.mockImplementationOnce(
+        async (params: DeliveryIntentCallbackParams) => {
+          params.onPayloadDeliveryOutcome?.({
+            index: 0,
+            status: "suppressed",
+            reason: "cancelled_by_message_sending_hook",
+          });
+          return [];
+        },
+      );
+
+      const result = await sendDurableMessageBatch({
+        cfg,
+        channel: "whatsapp",
+        to: "123456789-111111@g.us",
+        payloads: [{ text: "blocked" }],
+      });
+
+      expectBatchStatus(result, "suppressed");
+      expect(result.reason).toBe("cancelled_by_message_sending_hook");
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] durableSendStatus=suppressed");
+      expect(logged).toContain("[come-in-policy-diag] outboundResultCount=0");
+      expect(logged).toContain("[come-in-policy-diag] payloadOutcomeStatus=suppressed");
+      expect(logged).toContain(
+        "[come-in-policy-diag] payloadSuppressionReason=cancelled_by_message_sending_hook",
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });

@@ -718,6 +718,108 @@ describe("channel turn delivery", () => {
     expect(delivered.visibleReplySent).toBe(true);
   });
 
+  it("logs content-free durable lifecycle diagnostics without changing handled delivery", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      sendDurableMessageBatch.mockResolvedValueOnce(createDurableSendResult(["wa-1"]));
+      const deliver = vi.fn();
+
+      const result = await dispatchRoutedChannelTurn({
+        cfg,
+        channel: "whatsapp",
+        route: { agentId: "main", sessionKey: "agent:main:whatsapp:peer" },
+        ctxPayload: createCtx({ Surface: "whatsapp", To: "chat-1" }),
+        delivery: { deliver, durable: { replyToMode: "first" } },
+      });
+
+      expect(sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+      expect(deliver).not.toHaveBeenCalled();
+      expectDispatched(result);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] durableConfigured=true");
+      expect(logged).toContain("[come-in-policy-diag] durableEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] durableStatus=handled_visible");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs content-free durable no-send suppression diagnostics without changing the outcome", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      sendDurableMessageBatch.mockResolvedValueOnce({
+        status: "suppressed",
+        results: [],
+        receipt: { platformMessageIds: [], parts: [], sentAt: 1 },
+        reason: "cancelled_by_message_sending_hook",
+        payloadOutcomes: [
+          {
+            index: 0,
+            status: "suppressed",
+            reason: "cancelled_by_message_sending_hook",
+          },
+        ],
+      });
+      const onDelivered = vi.fn();
+
+      const result = await dispatchRoutedChannelTurn({
+        cfg,
+        channel: "whatsapp",
+        route: { agentId: "main", sessionKey: "agent:main:whatsapp:peer" },
+        ctxPayload: createCtx({ Surface: "whatsapp", To: "chat-1" }),
+        delivery: {
+          deliver: vi.fn(),
+          durable: { replyToMode: "first" },
+          onDelivered,
+        },
+      });
+
+      expect(onDelivered).toHaveBeenCalledTimes(1);
+      expectNonVisibleFinalReceipt(result.dispatchResult);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] durableStatus=handled_no_send");
+      expect(logged).toContain(
+        "[come-in-policy-diag] durableSuppressionReason=cancelled_by_message_sending_hook",
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs content-free direct fallback diagnostics without changing fallback delivery", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      resolveOutboundDurableFinalDeliverySupport.mockResolvedValueOnce({
+        ok: false,
+        reason: "missing_outbound_handler",
+      });
+      const deliver = vi.fn(async () => ({ messageIds: ["direct-1"], visibleReplySent: true }));
+
+      const result = await dispatchRoutedChannelTurn({
+        cfg,
+        channel: "whatsapp",
+        route: { agentId: "main", sessionKey: "agent:main:whatsapp:peer" },
+        ctxPayload: createCtx({
+          Surface: "whatsapp",
+          OriginatingTo: "123456789-111111@g.us",
+        }),
+        delivery: { deliver, durable: { replyToMode: "first" } },
+      });
+
+      expect(deliver).toHaveBeenCalledWith({ text: "reply" }, { kind: "final" });
+      expectDispatched(result);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] durableConfigured=true");
+      expect(logged).toContain("[come-in-policy-diag] durableEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] durableStatus=unsupported");
+      expect(logged).toContain("[come-in-policy-diag] directFallbackEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] routedMessageSendingEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] directChannelDeliverEntered=true");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("maps durable hook cancellation to typed routed suppression", async () => {
     sendDurableMessageBatch.mockResolvedValueOnce({
       status: "suppressed",

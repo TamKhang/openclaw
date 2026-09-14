@@ -559,4 +559,89 @@ describe("beforeDeliver in reply dispatcher", () => {
       await fs.rm(fixture.tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("logs content-free final diagnostics without changing delivery", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const delivered: string[] = [];
+      const dispatcher = createReplyDispatcher({
+        beforeDeliver: (payload) => ({ ...payload, text: `${payload.text ?? ""} + before` }),
+        deliver: async (payload) => {
+          delivered.push(payload.text ?? "");
+          return { visibleReplySent: true };
+        },
+      });
+
+      dispatcher.sendFinalReply({ text: "reply" });
+      dispatcher.markComplete();
+      const receipt = await dispatcher.waitForIdle();
+
+      expect(delivered).toEqual(["reply + before"]);
+      expect(receipt?.counts.final.delivered).toBe(1);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] finalBeforeDeliverEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] finalCustodyClaimed=false");
+      expect(logged).toContain("[come-in-policy-diag] finalDeliveryCallbackEntered=true");
+      expect(logged).toContain("[come-in-policy-diag] finalDeliveryOutcome=delivered");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs final cancellation diagnostics without changing the cancelled outcome", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const delivered: string[] = [];
+      const dispatcher = createReplyDispatcher({
+        beforeDeliver: async (payload: ReplyPayload) => {
+          if (payload.text?.includes("blocked")) {
+            return null;
+          }
+          return payload;
+        },
+        deliver: async (payload) => {
+          delivered.push(payload.text ?? "");
+        },
+      });
+
+      dispatcher.sendFinalReply({ text: "blocked reply" });
+      dispatcher.markComplete();
+      const receipt = await dispatcher.waitForIdle();
+
+      expect(delivered).toEqual([]);
+      expect(receipt?.counts.final.cancelled).toBe(1);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] finalBeforeDeliverCancelled=true");
+      expect(logged).toContain("[come-in-policy-diag] finalDeliveryOutcome=cancelled");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs final custody claim without changing direct delivery", async () => {
+    const fixture = await makePendingFinalFixture();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const delivered: string[] = [];
+      const dispatcher = createReplyDispatcher({
+        deliver: async (payload) => {
+          delivered.push(payload.text ?? "");
+          return { visibleReplySent: true };
+        },
+      });
+
+      dispatcher.sendFinalReply(fixture.payload);
+      dispatcher.markComplete();
+      const receipt = await dispatcher.waitForIdle();
+
+      expect(delivered).toEqual(["final answer"]);
+      expect(receipt?.counts.final.delivered).toBe(1);
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] finalCustodyClaimed=true");
+      expect(logged).toContain("[come-in-policy-diag] finalDeliveryOutcome=delivered");
+    } finally {
+      logSpy.mockRestore();
+      await fs.rm(fixture.tmpDir, { recursive: true, force: true });
+    }
+  });
 });

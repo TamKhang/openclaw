@@ -395,8 +395,19 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
       custody
         ? settlePendingFinalDelivery({ kind: "pending-final", ...custody }, state, ["queued"])
         : undefined;
+    // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+    // source-reply-policy investigation. Final-payload structural facts only.
+    const diagFinal = (facts: string): void => {
+      if (info.kind === "final") {
+        console.log(`[come-in-policy-diag] ${facts}`);
+      }
+    };
+    if (!custody) {
+      diagFinal("finalCustodyClaimed=false");
+    }
     try {
       if (beforeDeliver) {
+        diagFinal("finalBeforeDeliverEntered=true");
         try {
           deliverPayload = await beforeDeliver(payload, info);
         } catch (error) {
@@ -411,6 +422,8 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
               "prepared",
             ]);
           }
+          diagFinal("finalBeforeDeliverCancelled=true");
+          diagFinal("finalDeliveryOutcome=cancelled");
           await notifyBeforeDeliverCancelled(payload, info);
           return { settlement: Promise.resolve<ReplyDispatchDeliveryOutcome>("cancelled") };
         }
@@ -426,11 +439,15 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
           ["prepared"],
         );
         if (claim.state !== "queued") {
+          diagFinal("finalCustodyClaimed=false");
+          diagFinal("finalDeliveryOutcome=cancelled");
           await notifyBeforeDeliverCancelled(payload, info);
           return { settlement: Promise.resolve<ReplyDispatchDeliveryOutcome>("cancelled") };
         }
+        diagFinal("finalCustodyClaimed=true");
       }
       deliveryStarted = true;
+      diagFinal("finalDeliveryCallbackEntered=true");
       const result = await options.deliver(deliverPayload, info);
       const finalization =
         isRecord(result) && result.finalization instanceof Promise
@@ -446,9 +463,14 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
               finalization && isRecord(result) && isRecord(finalized)
                 ? { ...result, ...finalized, finalization: undefined }
                 : result;
-            return isExplicitlyNonVisibleDelivery(outcome) ? "delivered-not-visible" : "delivered";
+            const category: ReplyDispatchDeliveryOutcome = isExplicitlyNonVisibleDelivery(outcome)
+              ? "delivered-not-visible"
+              : "delivered";
+            diagFinal(`finalDeliveryOutcome=${category}`);
+            return category;
           } catch {
             await settleCustody("unknown");
+            diagFinal("finalDeliveryOutcome=failed-deliver");
             return "failed-deliver";
           } finally {
             pendingFinalizations -= finalization ? 1 : 0;
@@ -462,6 +484,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
       }
       const outcome: ReplyDispatchDeliveryOutcome =
         deliveryStarted && !retryableNoSend ? "failed-deliver" : "failed-before-deliver";
+      diagFinal(`finalDeliveryOutcome=${outcome}`);
       if (custody && deliveryStarted) {
         // Proven no-send keeps the marker replayable for restart recovery —
         // including after direct custody escalated queued→unknown pre-I/O,
