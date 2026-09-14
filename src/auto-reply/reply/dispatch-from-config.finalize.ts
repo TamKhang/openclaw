@@ -65,6 +65,16 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   const pendingFinalDeliveryIdentity = replies
     .map((reply) => getReplyPayloadMetadata(reply)?.pendingFinalDeliveryCompletion)
     .find((completion) => completion !== undefined);
+  // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+  // source-reply-policy investigation. Finalization structural facts only.
+  console.log(
+    `[come-in-policy-diag] finalizeDispatchAndAuditStart ` +
+      `finalReplyPayloadsCount=${replies.length} ` +
+      `sourceReplyDeliveryMode=${state.sourceReplyDeliveryMode} ` +
+      `sendPolicyDenied=${sendPolicyDenied} ` +
+      `suppressDelivery=${suppressDelivery} ` +
+      `deliverySuppressionReason=${state.deliverySuppressionReason || ""}`,
+  );
   // Final delivery is outside the progress wrappers. Wait until every source-ordered callback
   // has at least started so a delayed tool/reasoning transition cannot appear after the final.
   if (state.preserveProgressCallbackStartOrder) {
@@ -102,6 +112,18 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     }
     if (suppressDelivery && !shouldDeliverDespiteSourceReplySuppression(reply, state)) {
       if (hasOutboundReplyContent(reply, { trimText: true })) {
+        // Temporary content-free diagnostic: record that an otherwise-visible
+        // final payload was suppressed by the source delivery predicate.
+        console.log(
+          `[come-in-policy-diag] finalPayloadSuppressedByPredicate=true ` +
+            `replyIndex=${replyIndex} ` +
+            `finalReplyPayloadsCount=${replies.length} ` +
+            `deliverDespiteSourceReplySuppression=${
+              getReplyPayloadMetadata(reply)?.deliverDespiteSourceReplySuppression === true
+            } ` +
+            `suppressDelivery=${suppressDelivery} ` +
+            `deliverySuppressionReason=${state.deliverySuppressionReason || ""}`,
+        );
         logVerbose(
           [
             `dispatch-from-config: final reply suppressed by ${state.deliverySuppressionReason || "source delivery policy"}`,
@@ -367,6 +389,18 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     }
   }
   counts.final += routedFinalCount;
+  // Temporary content-free diagnostic: final queued/suppression accounting
+  // without message, group, participant, or authorization-token content.
+  console.log(
+    `[come-in-policy-diag] finalizeDispatchAndAuditEnd ` +
+      `queuedFinalFlag=${queuedFinal} ` +
+      `queuedFinalCount=${counts.final} ` +
+      `routedFinalCount=${routedFinalCount} ` +
+      `attemptedFinalDelivery=${attemptedFinalDelivery} ` +
+      `acceptedFinal=${acceptedFinal} ` +
+      `finalDeliveryFailed=${finalDeliveryFailed} ` +
+      `channelTransformSuppressedFinal=${channelTransformSuppressedFinal}`,
+  );
   const agentRunTerminalOutcome = state.getAgentRunTerminalOutcome();
   state.commitInboundDedupeIfClaimed();
   const messageInjectionAborted = state.replyOperationRunState.messageInjectionAborted === true;

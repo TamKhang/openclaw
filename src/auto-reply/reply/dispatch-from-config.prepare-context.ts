@@ -358,6 +358,18 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
     suppressHookUserDelivery,
     suppressHookReplyLifecycle,
   } = sourceReplyPolicy;
+  // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+  // source-reply-policy investigation. Authorization facts are boolean/enum only.
+  const outboundGroupReplyAuthorizationClass =
+    ctx.OutboundGroupReplyAuthorization?.authorizationClass;
+  console.log(
+    `[come-in-policy-diag] outboundGroupReplyAuthorization ` +
+      `present=${ctx.OutboundGroupReplyAuthorization != null} ` +
+      (outboundGroupReplyAuthorizationClass === "delegated_group_reply" ||
+      outboundGroupReplyAuthorizationClass === "owner_explicit_send"
+        ? `authorizationClass=${outboundGroupReplyAuthorizationClass}`
+        : `authorizationClass=none`),
+  );
   const reasoningPayloadsEnabled = params.replyOptions?.reasoningPayloadsEnabled === true;
   const commentaryPayloadsEnabled = params.replyOptions?.commentaryPayloadsEnabled === true;
   const attachSourceReplyDeliveryMode = (

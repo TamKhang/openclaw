@@ -1,5 +1,5 @@
 // Tests source reply delivery visibility across message tool and visible reply modes.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CommandTurnContext } from "../command-turn-context.js";
 import {
@@ -29,6 +29,36 @@ function expectPolicyFields(
     expect(policy[key as keyof typeof policy]).toBe(value);
   }
 }
+
+describe("come-in-policy diagnostic logging", () => {
+  it("logs structural policy facts without changing the resolved policy", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const policy = resolveSourceReplyVisibilityPolicy({
+        cfg: automaticGroupReplyConfig,
+        ctx: { ChatType: "group", InboundEventKind: "room_event" },
+        sendPolicy: "allow",
+        messageToolAvailable: true,
+      });
+      expect(policy).toMatchObject({
+        sourceReplyDeliveryMode: "message_tool_only",
+        sendPolicyDenied: false,
+        suppressAutomaticSourceDelivery: true,
+        suppressDelivery: true,
+        deliverySuppressionReason: "sourceReplyDeliveryMode: message_tool_only",
+      });
+      const logged = logSpy.mock.calls.flat().map(String).join("\n");
+      expect(logged).toContain("[come-in-policy-diag] sourceReplyPolicyResolved");
+      expect(logged).toContain("sourceReplyDeliveryMode=message_tool_only");
+      expect(logged).toContain("suppressDelivery=true");
+      expect(logged).toContain(
+        "deliverySuppressionReason=sourceReplyDeliveryMode: message_tool_only",
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
 
 describe("resolveSourceReplyDeliveryMode", () => {
   it("defaults source replies to automatic delivery outside ambient room events", () => {

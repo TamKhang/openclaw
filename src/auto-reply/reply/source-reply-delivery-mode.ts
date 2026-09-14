@@ -212,6 +212,17 @@ export function resolveSourceReplyVisibilityPolicy(params: {
       ? "sourceReplyDeliveryMode: message_tool_only"
       : "";
 
+  // Temporary content-free diagnostic for the live "Bruno, come in" WhatsApp
+  // source-reply-policy investigation. Structural policy facts only.
+  console.log(
+    `[come-in-policy-diag] sourceReplyPolicyResolved ` +
+      `sourceReplyDeliveryMode=${sourceReplyDeliveryMode} ` +
+      `sendPolicyDenied=${sendPolicyDenied} ` +
+      `suppressAutomaticSourceDelivery=${suppressAutomaticSourceDelivery} ` +
+      `suppressDelivery=${suppressDelivery} ` +
+      `deliverySuppressionReason=${deliverySuppressionReason || ""}`,
+  );
+
   return {
     sourceReplyDeliveryMode,
     sessionStableSourceReplyDeliveryMode,

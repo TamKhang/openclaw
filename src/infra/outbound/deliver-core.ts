@@ -45,6 +45,7 @@ import {
 import { createReplyToDeliveryPolicy } from "./reply-policy.js";
 import {
   assertWhatsAppOutboundTransportAuthorized,
+  isWhatsAppGroupDestination,
   validateWhatsAppOutboundAuthorization,
 } from "./whatsapp-outbound-authorization.js";
 
@@ -188,12 +189,20 @@ export async function deliverOutboundPayloadsCore(
   // with the same permit therefore fails with consumed_permit before it can
   // reach the adapter.
   const assertGroupAuthorizationBeforeTransport = (): void => {
+    // Temporary content-free diagnostic: record that the WhatsApp group
+    // transport boundary was reached without logging destination or token.
+    if (channel === "whatsapp" && isWhatsAppGroupDestination(to)) {
+      console.log("[come-in-policy-diag] whatsappTransportGateReached=true");
+    }
     assertWhatsAppOutboundTransportAuthorized({
       to,
       channel,
       authorization: params.outboundGroupReplyAuthorization,
       originEventId: params.outboundAuthorizationOriginEventId,
     });
+    if (channel === "whatsapp" && isWhatsAppGroupDestination(to)) {
+      console.log("[come-in-policy-diag] whatsappTransportGatePassed=true");
+    }
   };
 
   const sendTextChunks = async (

@@ -202,6 +202,21 @@ describe("whatsapp outbound transport integration (real delivery choke point)", 
     expect(sendText).toHaveBeenCalledTimes(1);
   });
 
+  it("diagnostic transport-boundary logging does not alter the one-shot gate", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const permit = basePermit();
+    registerWhatsAppOutboundAuthorization(permit);
+    const sendText = vi.fn(async () => createResult());
+    installOutbound({ deliveryMode: "direct", sendText });
+
+    await deliver({ authorization: permit });
+    expect(sendText).toHaveBeenCalledTimes(1);
+
+    const logged = logSpy.mock.calls.flat().map(String).join("\n");
+    expect(logged).toContain("[come-in-policy-diag] whatsappTransportGateReached=true");
+    expect(logged).toContain("[come-in-policy-diag] whatsappTransportGatePassed=true");
+  });
+
   it("delegated_group_reply obeys the same actual-transmission one-shot rule", async () => {
     const permit = delegatedPermit();
     registerWhatsAppOutboundAuthorization(permit);
