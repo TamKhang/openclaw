@@ -1,6 +1,6 @@
 // Regresses known config schema edge cases and compatibility expectations.
 import { describe, expect, it } from "vitest";
-import { validateConfigObject } from "./validation.js";
+import { validateConfigObject, validateConfigObjectRaw } from "./validation.js";
 
 describe("config schema regressions", () => {
   it.each([true, false])("accepts and preserves gateway.cliAgents.enabled=%s", (enabled) => {
@@ -591,5 +591,60 @@ describe("config schema regressions", () => {
     });
 
     expect(res.ok).toBe(false);
+  });
+});
+
+describe("bundled channel config metadata regressions", () => {
+  it("accepts WhatsApp groups.*.name through the bundled-channel validation boundary", () => {
+    const result = validateConfigObjectRaw(
+      {
+        channels: {
+          whatsapp: {
+            dmPolicy: "pairing",
+            groupPolicy: "allowlist",
+            mediaMaxMb: 50,
+            groups: { "123456789@g.us": { name: "3C Castle Hill" } },
+          },
+        },
+      },
+      { validateBundledChannels: true },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.channels?.whatsapp?.groups?.["123456789@g.us"]?.name).toBe(
+        "3C Castle Hill",
+      );
+    }
+  });
+
+  it("rejects unrelated unknown WhatsApp group properties through the bundled-channel validation boundary", () => {
+    const result = validateConfigObjectRaw(
+      {
+        channels: {
+          whatsapp: {
+            dmPolicy: "pairing",
+            groupPolicy: "allowlist",
+            mediaMaxMb: 50,
+            groups: {
+              "123456789@g.us": { name: "3C Castle Hill", arbitraryUnknown: true },
+            },
+          },
+        },
+      },
+      { validateBundledChannels: true },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          path: "channels.whatsapp.groups.123456789@g.us",
+          message: expect.stringContaining(
+            'must not have additional properties: "arbitraryUnknown"',
+          ),
+        }),
+      );
+    }
   });
 });
