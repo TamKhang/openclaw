@@ -17,16 +17,35 @@ import type {
   PluginApprovalRequest,
 } from "openclaw/plugin-sdk/approval-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { claimWhatsAppOutboundAuthorizationForTransport } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
 import { resolveDefaultWhatsAppAccountId } from "./accounts.js";
 import {
   registerWhatsAppApprovalReactionTarget,
   unregisterWhatsAppApprovalReactionTarget,
 } from "./approval-reactions.js";
-import { normalizeWhatsAppMessagingTarget } from "./normalize.js";
+import { isWhatsAppGroupJid, normalizeWhatsAppMessagingTarget } from "./normalize.js";
 import { getWhatsAppRuntime } from "./runtime.js";
 import { sendMessageWhatsApp, sendTypingWhatsApp } from "./send.js";
 
 const log = createSubsystemLogger("whatsapp/approvals");
+
+function assertWhatsAppApprovalGroupTransportAuthorized(to: string): void {
+  if (!isWhatsAppGroupJid(to)) {
+    return;
+  }
+  // Approval prompts to a WhatsApp group are themselves outbound group
+  // messages. They cannot carry a trusted group-send permit, so they fail
+  // closed before any physical transmission.
+  const decision = claimWhatsAppOutboundAuthorizationForTransport({
+    to,
+    channel: "whatsapp",
+    authorization: undefined,
+    originEventId: undefined,
+  });
+  if (decision.status === "denied") {
+    throw new Error(`whatsapp approval group outbound denied: ${decision.reasonCode}`);
+  }
+}
 
 type ApprovalRequest = ExecApprovalRequest | PluginApprovalRequest;
 type WhatsAppPendingDelivery = ApprovalReactionPendingContent;
@@ -98,6 +117,7 @@ export const whatsappApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
       };
     },
     deliverPending: async ({ cfg, preparedTarget, pendingPayload }) => {
+      assertWhatsAppApprovalGroupTransportAuthorized(preparedTarget.to);
       const verbose = getWhatsAppRuntime().logging.shouldLogVerbose();
       await sendTypingWhatsApp(preparedTarget.to, {
         cfg,
@@ -124,6 +144,7 @@ export const whatsappApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
       };
     },
     updateEntry: async ({ cfg, entry, payload }) => {
+      assertWhatsAppApprovalGroupTransportAuthorized(entry.to);
       const verbose = getWhatsAppRuntime().logging.shouldLogVerbose();
       await sendMessageWhatsApp(entry.to, payload.text, {
         cfg,

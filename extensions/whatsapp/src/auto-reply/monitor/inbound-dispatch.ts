@@ -22,6 +22,7 @@ import {
   resolveWhatsAppAdmissionChannelIngress,
 } from "../../inbound/admission.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
+import { isWhatsAppGroupJid } from "../../normalize.js";
 import {
   type DeliverableWhatsAppOutboundPayload,
   normalizeWhatsAppOutboundPayload,
@@ -39,6 +40,7 @@ import { formatAuthoritativeGroupReplyText } from "./group-participant-name.js";
 import {
   createExplicitOwnerReplyDeliveryGate,
   EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
+  markGroupReplyDelegationConsumedForDelivery,
 } from "./group-reply-once.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 import {
@@ -661,13 +663,11 @@ export function createWhatsAppReplyPlan(params: {
   shouldClearGroupHistory: boolean;
   statusReactionController?: StatusReactionController | null;
   transport: WhatsAppInboundTransportContext;
-  /** Owner-explicit-send resolved group target; overrides the DM reply route. */
-  outboundDeliveryTarget?: string;
   turnAdoptionLifecycle?: NonNullable<
     NonNullable<ChannelInboundTurnPlan["replyOptions"]>["turnAdoptionLifecycle"]
   >;
 }) {
-  const conversationId = params.outboundDeliveryTarget ?? params.inbound.conversation.id;
+  const conversationId = params.inbound.conversation.id;
   const statusReactionController = params.statusReactionController ?? null;
   const textLimit = params.maxMediaTextChunkLimit ?? resolveTextChunkLimit(params.cfg, "whatsapp");
   const chunkMode = resolveChunkMode(params.cfg, "whatsapp", params.route.accountId);
@@ -730,29 +730,48 @@ export function createWhatsAppReplyPlan(params: {
   const claimOutboundAuthorizationForDelivery = (): boolean => {
     const authorization = params.context.OutboundGroupReplyAuthorization;
     if (!authorization) {
-      return true;
+      // Fail closed on the physical outbound destination: a WhatsApp group
+      // JID must never transmit without trusted authorization, regardless of
+      // upstream conversationKind metadata. Direct/non-group replies are
+      // unaffected and keep their existing behavior.
+      return !isWhatsAppGroupJid(params.transport.chatJid);
     }
     if (authorization.authorizationClass === "delegated_group_reply") {
-      return claimExplicitOwnerReplyDeliveryAllowed();
-    }
-    if (authorization.authorizationClass === "owner_explicit_send") {
+      // Validate the delegated bindings (owner, group, chat, quoted target)
+      // without consuming the delegation store, then consume the single
+      // authoritative central permit exactly once.
+      if (!claimExplicitOwnerReplyDeliveryAllowed()) {
+        return false;
+      }
       const decision = claimWhatsAppOutboundAuthorizationForTransport({
         to: params.transport.chatJid,
         channel: "whatsapp",
         authorization,
         originEventId: authorization.sourceEventId,
       });
-      if (decision.status === "authorized" || decision.status === "not_required") {
+      if (decision.status === "authorized") {
+        if (params.msg) {
+          markGroupReplyDelegationConsumedForDelivery({ msg: params.msg });
+        }
         return true;
       }
-      params.replyLogger.warn({ decision, conversationId }, "owner explicit send delivery denied");
+      params.replyLogger.warn(
+        { decision, conversationId },
+        "delegated group reply delivery denied by transport authorization",
+      );
       return false;
     }
+    // owner_explicit_send and any unknown authorization class are not approved
+    // group-send authorizations; deny before transport.
+    params.replyLogger.warn(
+      { authorizationClass: authorization.authorizationClass, conversationId },
+      "non-approved group send authorization denied",
+    );
     return false;
   };
   const assertOutboundAuthorizationForTransportSend = (): void => {
     if (!claimOutboundAuthorizationForDelivery()) {
-      throw new Error("whatsapp group outbound denied: consumed_permit");
+      throw new Error("whatsapp group outbound denied: missing_or_invalid_authorization");
     }
   };
   const prepareAuthoritativeGroupReplyPayload = (
@@ -787,10 +806,8 @@ export function createWhatsAppReplyPlan(params: {
     info: ReplyDeliveryInfo,
     options?: { recordDelivery?: boolean; onMediaAccepted?: (mediaUrl: string) => void },
   ): Promise<WhatsAppReplyDeliveryVisibility> => {
-    const targetPayload = params.outboundDeliveryTarget
-      ? { ...normalizedDeliveryPayload, replyToId: undefined }
-      : normalizedDeliveryPayload;
-    const authoritativeDeliveryPayload = prepareAuthoritativeGroupReplyPayload(targetPayload);
+    const authoritativeDeliveryPayload =
+      prepareAuthoritativeGroupReplyPayload(normalizedDeliveryPayload);
     const reply = resolveSendableOutboundReplyParts(authoritativeDeliveryPayload);
     if (!reply.hasMedia && !reply.text.trim()) {
       return whatsAppReplyDeliveryVisibility(false);
@@ -894,14 +911,12 @@ export function createWhatsAppReplyPlan(params: {
       }
       return {
         to: conversationId,
-        replyToId: params.outboundDeliveryTarget
-          ? null
-          : resolveWhatsAppDurableReplyToId({
-              context: params.context,
-              info,
-              currentMessageId: params.transport.correlationId,
-              payload,
-            }),
+        replyToId: resolveWhatsAppDurableReplyToId({
+          context: params.context,
+          info,
+          currentMessageId: params.transport.correlationId,
+          payload,
+        }),
         outboundGroupReplyAuthorization: params.context.OutboundGroupReplyAuthorization,
         formatting: {
           textLimit,

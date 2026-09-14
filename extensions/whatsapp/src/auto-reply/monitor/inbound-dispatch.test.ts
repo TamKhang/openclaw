@@ -6,6 +6,10 @@ import { createAcceptedWhatsAppSendResult } from "../../inbound/send-result.test
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
 import { loadWebMedia } from "../../media.js";
 import { deliverWebReply } from "../deliver-reply.js";
+import {
+  authorizeExplicitOwnerGroupReply,
+  resetGroupReplyOnceForTests,
+} from "./group-reply-once.js";
 
 let capturedDispatchParams: unknown;
 
@@ -197,6 +201,84 @@ function makeMsg(overrides: TestMsgOverrides = {}): TestMsg {
     },
     ...messageOverrides,
   });
+}
+
+const OWNER_E164 = "+15550000001";
+const TARGET_E164 = "+15550000002";
+
+function makeDelegatedGroupReplyMsg(): TestMsg {
+  return makeMsg({
+    admission: groupAdmission("123@g.us"),
+    event: { id: "owner-trigger-1" },
+    payload: { body: "Bruno, come in" },
+    platform: {
+      chatJid: "123@g.us",
+      recipientJid: "bot@s.whatsapp.net",
+      senderE164: OWNER_E164,
+      senderName: "Owner",
+    },
+    quote: {
+      context: {
+        id: "quoted-1",
+        body: "Can you help me with this?",
+        sender: { e164: TARGET_E164, name: "Alice" },
+      },
+    },
+  });
+}
+
+function authorizeDelegatedGroupReply(msg: TestMsg) {
+  const result = authorizeExplicitOwnerGroupReply({
+    cfg: {} as never,
+    msg,
+    baseMentionConfig: { mentionRegexes: [], allowFrom: [OWNER_E164] },
+    groupHistoryKey: "123@g.us",
+    groupMemberNames: new Map(),
+  });
+  if (result.status !== "authorized") {
+    throw new Error(`expected delegated group reply authorization, got ${result.status}`);
+  }
+  return result.authorization;
+}
+
+function delegatedGroupReplyContext(
+  authorization: ReturnType<typeof authorizeDelegatedGroupReply>,
+): Partial<BufferedReplyParams["context"]> {
+  return {
+    OutboundGroupReplyAuthorization: {
+      authorizationClass: "delegated_group_reply" as const,
+      policyVersion: 1 as const,
+      actionType: "whatsapp.group.send" as const,
+      capability: "whatsapp.group.reply_once" as const,
+      token: authorization.token,
+      ownerE164: authorization.ownerE164,
+      groupId: authorization.groupId,
+      chatId: authorization.chatId,
+      ownerTriggerMessageId: authorization.ownerTriggerMessageId,
+      quotedMessageId: authorization.quotedMessageId,
+      targetParticipantId: authorization.target.participantId,
+      sourceEventId: authorization.sourceEventId,
+      createdAt: authorization.createdAt,
+      expiresAt: authorization.expiresAt,
+      maxSends: 1 as const,
+    },
+  };
+}
+
+async function captureOutboundAuthorizationAssertion(overrides: BufferedReplyOverrides = {}) {
+  const deliverReply = vi.fn(async () => acceptedDeliveryResult());
+  await dispatchBufferedReply({ ...overrides, deliverReply });
+  const deliver = getCapturedDeliver();
+  if (!deliver) {
+    throw new Error("expected captured deliver callback");
+  }
+  await deliver({ text: "hello" }, { kind: "final" });
+  const params = requireLastMockArg(deliverReply, 0, "deliver reply params");
+  const assertAuthorizationBeforeSend = params.assertAuthorizationBeforeSend as unknown as
+    | (() => void)
+    | undefined;
+  expect(typeof assertAuthorizationBeforeSend).toBe("function");
+  return assertAuthorizationBeforeSend as () => void;
 }
 
 function collectNonPortablePaths(
@@ -1106,6 +1188,97 @@ describe("whatsapp inbound dispatch", () => {
     await deliver?.({ text: "block payload" }, { kind: "block" });
     await deliver?.({ text: "final payload" }, { kind: "final" });
     expect(deliverReply).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails closed for a group media delivery with no trusted authorization context", async () => {
+    vi.mocked(loadWebMedia).mockImplementation(async (url) => ({
+      buffer: Buffer.from(url),
+      contentType: "image/jpeg",
+      kind: "image",
+    }));
+    const reply = vi.fn<TestMsg["platform"]["reply"]>(async () => {
+      throw new Error("unexpected physical group text transmission");
+    });
+    const sendMedia = vi.fn<TestMsg["platform"]["sendMedia"]>(async () => {
+      throw new Error("unexpected physical group media transmission");
+    });
+    const deliverReply = vi.fn(deliverWebReply);
+    await dispatchBufferedReply({
+      deliverReply,
+      msg: makeMsg({
+        admission: groupAdmission("123@g.us"),
+        platform: { chatJid: "123@g.us", reply, sendMedia },
+      }),
+    });
+    const deliver = getCapturedDeliver();
+    if (!deliver) {
+      throw new Error("expected captured deliver callback");
+    }
+    await expect(
+      deliver({ text: "", mediaUrls: ["/tmp/generated.jpg"] }, { kind: "final" }),
+    ).rejects.toThrow(/missing_or_invalid_authorization/);
+    expect(reply).not.toHaveBeenCalled();
+    expect(sendMedia).not.toHaveBeenCalled();
+  });
+
+  it("denies a group JID with group conversationKind and no authorization", async () => {
+    const assertAuthorizationBeforeSend = await captureOutboundAuthorizationAssertion({
+      msg: makeMsg({
+        admission: groupAdmission("123@g.us"),
+        platform: { chatJid: "123@g.us" },
+      }),
+    });
+
+    expect(() => assertAuthorizationBeforeSend()).toThrow(/missing_or_invalid_authorization/);
+  });
+
+  it("denies a group JID with direct conversationKind and no authorization", async () => {
+    const assertAuthorizationBeforeSend = await captureOutboundAuthorizationAssertion({
+      msg: makeMsg({
+        admission: directAdmission("123@g.us"),
+        platform: { chatJid: "123@g.us" },
+      }),
+    });
+
+    expect(() => assertAuthorizationBeforeSend()).toThrow(/missing_or_invalid_authorization/);
+  });
+
+  it("allows a non-group destination with direct conversationKind and no authorization", async () => {
+    const assertAuthorizationBeforeSend = await captureOutboundAuthorizationAssertion({
+      msg: makeMsg({
+        admission: directAdmission("+1000"),
+        platform: { chatJid: "+1000" },
+      }),
+    });
+
+    expect(() => assertAuthorizationBeforeSend()).not.toThrow();
+  });
+
+  it("allows a valid delegated group authorization once and denies reuse", async () => {
+    resetGroupReplyOnceForTests();
+    const msg = makeDelegatedGroupReplyMsg();
+    const authorization = authorizeDelegatedGroupReply(msg);
+    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
+    await dispatchBufferedReply({
+      deliverReply,
+      msg,
+      context: delegatedGroupReplyContext(authorization),
+    });
+    const deliver = getCapturedDeliver();
+    if (!deliver) {
+      throw new Error("expected captured deliver callback");
+    }
+    await deliver({ text: "group reply" }, { kind: "final" });
+    const params = requireLastMockArg(deliverReply, 0, "deliver reply params");
+    const assertAuthorizationBeforeSend = params.assertAuthorizationBeforeSend as unknown as
+      | (() => void)
+      | undefined;
+    expect(typeof assertAuthorizationBeforeSend).toBe("function");
+    expect(() => (assertAuthorizationBeforeSend as () => void)()).not.toThrow();
+    expect(deliverReply).toHaveBeenCalledTimes(1);
+    expect(() => (assertAuthorizationBeforeSend as () => void)()).toThrow(
+      /missing_or_invalid_authorization/,
+    );
   });
 
   it("retains the full approved batch when its partial replacement is cancelled", async () => {

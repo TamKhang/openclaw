@@ -1,3 +1,4 @@
+import { claimWhatsAppOutboundAuthorizationForTransport } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
@@ -198,13 +199,48 @@ describe("consumeGroupReplyOnceAuthorization", () => {
 describe("createExplicitOwnerReplyDeliveryGate", () => {
   beforeEach(() => resetGroupReplyOnceForTests());
 
-  it("permits exactly one physical delivery", () => {
+  it("validates delegated delivery without consuming the delegation store", () => {
     const msg = makeGroupReplyMessage();
     expect(authorize({ msg }).status).toBe("authorized");
     const gate = createExplicitOwnerReplyDeliveryGate({ msg });
     expect(gate.hasTurnEligibility()).toBe(true);
     expect(gate.claimForDelivery()).toMatchObject({ status: "authorized" });
-    expect(gate.claimForDelivery()).toMatchObject({ status: "denied", reason: "already_consumed" });
+    expect(gate.claimForDelivery()).toMatchObject({ status: "authorized" });
+  });
+
+  it("central trusted registry enforces the single delegated physical send", () => {
+    const msg = makeGroupReplyMessage();
+    const result = authorize({ msg });
+    expect(result.status).toBe("authorized");
+    if (result.status !== "authorized") return;
+    // Mirrors the flat ctxPayload.OutboundGroupReplyAuthorization projection
+    // built by process-message.ts for the transport gate.
+    const authorization = {
+      authorizationClass: "delegated_group_reply" as const,
+      policyVersion: 1 as const,
+      actionType: "whatsapp.group.send" as const,
+      capability: "whatsapp.group.reply_once" as const,
+      token: result.authorization.token,
+      ownerE164: result.authorization.ownerE164,
+      groupId: "group@g.us",
+      chatId: "group@g.us",
+      ownerTriggerMessageId: result.authorization.ownerTriggerMessageId,
+      quotedMessageId: result.authorization.quotedMessageId,
+      targetParticipantId: result.authorization.target.participantId,
+      sourceEventId: result.authorization.sourceEventId,
+      createdAt: result.authorization.createdAt,
+      expiresAt: result.authorization.expiresAt,
+      maxSends: 1 as const,
+    };
+    const claim = () =>
+      claimWhatsAppOutboundAuthorizationForTransport({
+        to: "group@g.us",
+        channel: "whatsapp",
+        authorization,
+        originEventId: authorization.sourceEventId,
+      });
+    expect(claim()).toMatchObject({ status: "authorized" });
+    expect(claim()).toMatchObject({ status: "denied", reasonCode: "consumed_permit" });
   });
 
   it("treats an absent authorization as not required", () => {

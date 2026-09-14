@@ -292,7 +292,7 @@ export function authorizeExplicitOwnerGroupReply(
   return { status: "authorized", authorization };
 }
 
-export function consumeGroupReplyOnceAuthorization(
+export function validateGroupReplyOnceAuthorizationForDelivery(
   params: {
     msg: AdmittedWebInboundMessage;
     authDir?: string;
@@ -351,12 +351,40 @@ export function consumeGroupReplyOnceAuthorization(
     return { status: "denied", reason: "quoted_target_mismatch" };
   }
 
-  const claimed = store.claim(sourceEventId, runtime.now());
+  return { status: "authorized", authorization: durable };
+}
+
+export function consumeGroupReplyOnceAuthorization(
+  params: {
+    msg: AdmittedWebInboundMessage;
+    authDir?: string;
+  },
+  runtime: Pick<GroupReplyOnceRuntime, "now"> = defaultGroupReplyOnceRuntime,
+): GroupReplyOnceConsumeResult {
+  const validated = validateGroupReplyOnceAuthorizationForDelivery(params, runtime);
+  if (validated.status === "denied") {
+    return validated;
+  }
+  const claimed = resolveGroupReplyDelegationStore().claim(
+    validated.authorization.sourceEventId,
+    runtime.now(),
+  );
   if (claimed.status !== "authorized") {
     return claimed;
   }
   params.msg.groupReplyOnce = claimed.authorization;
-  return { status: "authorized", authorization: claimed.authorization };
+  return claimed;
+}
+
+export function markGroupReplyDelegationConsumedForDelivery(params: {
+  msg: AdmittedWebInboundMessage;
+  now?: number;
+}): void {
+  const sourceEventId = params.msg.groupReplyOnce?.sourceEventId;
+  if (!sourceEventId) {
+    return;
+  }
+  resolveGroupReplyDelegationStore().claim(sourceEventId, params.now ?? Date.now());
 }
 
 export function createExplicitOwnerReplyDeliveryGate(params: {
@@ -371,7 +399,7 @@ export function createExplicitOwnerReplyDeliveryGate(params: {
       if (!hasTurnEligibility) {
         return { status: "not_required" };
       }
-      return consumeGroupReplyOnceAuthorization(
+      return validateGroupReplyOnceAuthorizationForDelivery(
         {
           msg: params.msg,
           authDir: params.authDir,

@@ -1,6 +1,12 @@
 // Whatsapp tests cover approval handler plugin behavior.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { whatsappApprovalNativeRuntime } from "./approval-handler.runtime.js";
+import { sendMessageWhatsApp, sendTypingWhatsApp } from "./send.js";
+
+vi.mock("./send.js", () => ({
+  sendMessageWhatsApp: vi.fn(async () => ({ messageId: "m1", toJid: "group@g.us" })),
+  sendTypingWhatsApp: vi.fn(async () => {}),
+}));
 
 describe("whatsappApprovalNativeRuntime", () => {
   it("renders allowed thumbs-only reactions in pending exec approvals", async () => {
@@ -156,6 +162,31 @@ describe("whatsappApprovalNativeRuntime", () => {
         accountId: "ops",
       },
     });
+  });
+
+  it("fails closed when an approval delivery targets a WhatsApp group", async () => {
+    await expect(
+      whatsappApprovalNativeRuntime.transport.deliverPending({
+        cfg: {} as never,
+        preparedTarget: { to: "123@g.us", accountId: "default" },
+        pendingPayload: {
+          reactionPayload: { text: "pending", allowedDecisions: ["allow-once"] },
+        } as never,
+      }),
+    ).rejects.toThrow(/whatsapp approval group outbound denied/);
+    expect(sendMessageWhatsApp).not.toHaveBeenCalled();
+    expect(sendTypingWhatsApp).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an approval update targets a WhatsApp group", async () => {
+    await expect(
+      whatsappApprovalNativeRuntime.transport.updateEntry({
+        cfg: {} as never,
+        entry: { accountId: "default", to: "123@g.us", remoteJid: "123@g.us", messageId: "m1" },
+        payload: { text: "resolved" },
+      }),
+    ).rejects.toThrow(/whatsapp approval group outbound denied/);
+    expect(sendMessageWhatsApp).not.toHaveBeenCalled();
   });
 
   it("resolves the configured default account before binding native reactions", async () => {
