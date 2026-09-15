@@ -37,6 +37,7 @@ import { whatsappInboundLog } from "../loggers.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import { buildGroupReplyAgentBody } from "./group-participant-name.js";
+import { authorizeHighBrainDm } from "./high-brain.js";
 import {
   resolveVisibleWhatsAppGroupHistory,
   resolveVisibleWhatsAppReplyContext,
@@ -151,6 +152,40 @@ export async function processMessage(params: {
     selfE164: self.e164 ?? null,
   });
   const account = inboundPolicy.account;
+
+  // Owner-authorized DM High Brain trigger: recognize before any ack/status
+  // reaction or inbound-log side effect so a denied attempt suppresses
+  // processing without leaving reaction or dispatch state behind.
+  let highBrainDmQuery: string | undefined;
+  if (conversationKind === "direct" && params.msg.highBrain === undefined) {
+    const highBrainDm = authorizeHighBrainDm({
+      cfg: params.cfg,
+      msg: params.msg,
+      baseMentionConfig: {
+        mentionRegexes: [],
+        allowFrom: inboundPolicy.configuredAllowFrom,
+      },
+      authDir: account.authDir,
+    });
+    if (highBrainDm.status === "authorized") {
+      highBrainDmQuery = highBrainDm.query;
+      params.msg.highBrain = {
+        sourceEventId: highBrainDm.sourceEventId,
+        mode: highBrainDm.mode,
+      };
+    } else if (highBrainDm.status === "denied") {
+      // Fail closed: an exact owner-syntax High Brain DM that cannot be
+      // authorized must never fall through to ordinary semantic routing. Emit
+      // content-free denial evidence only; never the query, JID, message id,
+      // token, or any message content.
+      params.replyLogger.warn(
+        { reason: highBrainDm.reason },
+        "whatsapp: High Brain DM denied; suppressing processing",
+      );
+      return false;
+    }
+  }
+
   const contextVisibilityMode = resolveChannelContextVisibilityMode({
     cfg: params.cfg,
     channel: "whatsapp",
@@ -350,7 +385,7 @@ export async function processMessage(params: {
     ? buildGroupReplyAgentBody({
         quotedBody: params.msg.groupReplyOnce.quotedBody,
       })
-    : msgForAgent.payload.body;
+    : (highBrainDmQuery ?? msgForAgent.payload.body);
   const dmRouteTarget = resolveWhatsAppDmRouteTarget({
     msg: params.msg,
     senderE164: sender.e164 ?? undefined,
@@ -429,6 +464,11 @@ export async function processMessage(params: {
     suppressMessageReceivedHooks: true,
   });
   const { inbound, turnInput, ctxPayload } = prepared;
+  if (params.msg.highBrain) {
+    ctxPayload.BrunoHighBrain = {
+      sourceEventId: params.msg.highBrain.sourceEventId,
+    };
+  }
   if (params.msg.groupReplyOnce) {
     ctxPayload.OutboundGroupReplyAuthorization = {
       authorizationClass: params.msg.groupReplyOnce.authorizationClass,

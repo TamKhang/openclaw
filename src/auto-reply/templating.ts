@@ -394,6 +394,15 @@ export type MsgContext = Partial<CanonicalInboundText> & {
    * from message text, prompt text, quoted content, or model output.
    */
   OutboundGroupReplyAuthorization?: PluginHookOutboundGroupReplyAuthorization;
+  /**
+   * Trusted internal-only, one-shot Bruno High Brain classification override
+   * marker set by channel feature code after exact trigger/owner/quote/event
+   * validation. The opaque sourceEventId points at the authoritative core
+   * override registry; this projection alone never authorizes HIGH.
+   */
+  BrunoHighBrain?: {
+    sourceEventId: string;
+  };
   /** Provider-native chat/conversation id used by channel plugins that expose `chat_id`. */
   ChatId?: string;
   /** Stable provider-native direct-peer id when a DM room/user mapping must survive later writes. */

@@ -12,6 +12,9 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const WHATSAPP_DIST = path.join(REPO_ROOT, "extensions", "whatsapp", "dist");
 const FORMER_REGISTRAR_KEY = "plugin-runtime:whatsapp:outbound-authorization-registrar";
 const RESET_EXPORT = "resetWhatsAppOutboundAuthorizationRegistrar";
+const HIGH_BRAIN_RESET_EXPORT = "resetWhatsAppHighBrainClassificationRegistrar";
+const HIGH_BRAIN_BINDING = "let highBrainClassificationRegistrar";
+const HIGH_BRAIN_CORE_REGISTRAR = "registerBrunoHighBrainOverride";
 const PRIVATE_REGISTRATION_SUBPATH = "whatsapp-outbound-authorization-registration";
 
 function buildWhatsAppPackage(): void {
@@ -53,7 +56,18 @@ describe("compiled WhatsApp registrar hardening", () => {
       expect(source, `former key leaked into ${name}`).not.toContain(FORMER_REGISTRAR_KEY);
     }
 
-    // 2. No compiled production entry may export or reference a reset operation.
+    // 2. The High Brain registrar reset must also be absent from compiled output,
+    // and the externalized package must never import the core High Brain registrar.
+    for (const [name, source] of dist) {
+      expect(source, `High Brain reset leaked into ${name}`).not.toContain(HIGH_BRAIN_RESET_EXPORT);
+    }
+    for (const [name, source] of dist) {
+      expect(source, `core High Brain registrar import leaked into ${name}`).not.toContain(
+        HIGH_BRAIN_CORE_REGISTRAR,
+      );
+    }
+
+    // 2b. No compiled production entry may export or reference a reset operation.
     for (const [name, source] of dist) {
       expect(source, `reset leaked into ${name}`).not.toContain(RESET_EXPORT);
     }
@@ -80,6 +94,13 @@ describe("compiled WhatsApp registrar hardening", () => {
     // 6. Exactly one private module-lexical registrar binding exists.
     const bindingMatches = (runtimeChunk ?? "").match(/\blet outboundAuthorizationRegistrar\b/gu);
     expect(bindingMatches).toHaveLength(1);
+
+    // 6b. Exactly one private module-lexical High Brain registrar binding exists
+    // in the same shared runtime chunk (setter sidecar and monitor consumer).
+    const highBrainBindingMatches = (runtimeChunk ?? "").match(
+      new RegExp(`\\b${HIGH_BRAIN_BINDING}\\b`, "gu"),
+    );
+    expect(highBrainBindingMatches).toHaveLength(1);
 
     const monitorChunks = [...dist.keys()].filter((name) => name.startsWith("monitor-"));
     expect(monitorChunks.length).toBeGreaterThan(0);

@@ -541,12 +541,12 @@ export function loadRuntimePluginCandidate(params: {
   // implementation. The plugin-controlled setter is neither read nor invoked
   // unless the record carries host-owned bundled provenance and the expected
   // bundled-channel-entry kind; everything else fails closed.
-  const channelRuntimeDependency = isTrustedBundledChannelRuntimeDependencyRequest({
+  const channelRuntimeDependencies = isTrustedBundledChannelRuntimeDependencyRequest({
     origin: record.origin,
     kind: record.kind,
   })
-    ? readBundledChannelRuntimeDependency(definition)
-    : undefined;
+    ? readBundledChannelRuntimeDependencies(definition)
+    : [];
   const beforeRegister = performance.now();
   let registerFailed = false;
   try {
@@ -555,7 +555,7 @@ export function loadRuntimePluginCandidate(params: {
       `${registrationPlan.mode}:register`,
       () => runPluginRegisterSyncInRegistry(register, api, registry, record.id),
     );
-    if (channelRuntimeDependency) {
+    for (const channelRuntimeDependency of channelRuntimeDependencies) {
       const deps = resolveBundledChannelRuntimeDependency({
         pluginId: record.id,
         capability: channelRuntimeDependency.capability,
@@ -654,20 +654,32 @@ function recordBundleDiagnostics(params: {
   params.registry.plugins.push(params.record);
 }
 
-function readBundledChannelRuntimeDependency(
+function readBundledChannelRuntimeDependencies(
   definition: OpenClawPluginDefinition | undefined,
-): { capability: string; setter: (deps: unknown) => void } | undefined {
+): readonly { capability: string; setter: (deps: unknown) => void }[] {
   const entry = definition as
     | (OpenClawPluginDefinition & {
         setChannelRuntimeDependencies?: (deps: unknown) => void;
         runtimeDependencyCapability?: string;
+        runtimeDependencies?: readonly { capability: string; setter: (deps: unknown) => void }[];
       })
     | undefined;
-  if (!entry?.setChannelRuntimeDependencies || !entry.runtimeDependencyCapability) {
-    return undefined;
+  if (Array.isArray(entry?.runtimeDependencies) && entry.runtimeDependencies.length > 0) {
+    return entry.runtimeDependencies.filter(
+      (dependency) =>
+        Boolean(dependency) &&
+        typeof dependency.capability === "string" &&
+        dependency.capability.length > 0 &&
+        typeof dependency.setter === "function",
+    );
   }
-  return {
-    capability: entry.runtimeDependencyCapability,
-    setter: entry.setChannelRuntimeDependencies,
-  };
+  if (!entry?.setChannelRuntimeDependencies || !entry.runtimeDependencyCapability) {
+    return [];
+  }
+  return [
+    {
+      capability: entry.runtimeDependencyCapability,
+      setter: entry.setChannelRuntimeDependencies,
+    },
+  ];
 }

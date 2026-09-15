@@ -10,6 +10,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { claimBrunoHighBrainOverrideForRouting } from "./bruno-high-brain.js";
 import {
   resolveTrustedBrunoRoutingCapability,
   type TrustedBrunoRoutingCapability,
@@ -59,7 +60,13 @@ export type BrunoModelRouterDecision = {
 export interface BrunoModelRouter {
   route(
     facts: BrunoModelRoutingFacts,
-    context: { capabilityId: string; traceId?: string; correlationId?: string },
+    context: {
+      capabilityId: string;
+      traceId?: string;
+      correlationId?: string;
+      /** Host-authorized one-shot HIGH classification override. */
+      forcedTier?: "high";
+    },
   ): BrunoModelRouterDecision | Promise<BrunoModelRouterDecision>;
 }
 
@@ -154,13 +161,21 @@ function emitDecisionTelemetry(params: {
 
 export async function routeConversationalTurnWithBruno(params: {
   enabled: boolean;
-  scope: { messageProvider?: string | null; chatType?: string | null };
+  scope: {
+    messageProvider?: string | null;
+    chatType?: string | null;
+    outboundGroupReplyAuthorization?:
+      | import("../plugins/hook-message.types.js").PluginHookOutboundGroupReplyAuthorization
+      | null;
+  };
   facts: BrunoModelRoutingFacts;
   sessionKey?: string;
   traceId?: string;
   correlationId?: string;
   requestedProvider?: string;
   requestedModel?: string;
+  /** Host-derived one-shot High Brain override pointer (opaque source event id). */
+  highBrainSourceEventId?: string;
 }): Promise<BrunoModelRoutingTurnResult> {
   if (!params.enabled) {
     return { kind: "not-applicable" };
@@ -169,6 +184,7 @@ export async function routeConversationalTurnWithBruno(params: {
   const capabilityId = resolveTrustedBrunoRoutingCapability({
     messageProvider: params.scope.messageProvider,
     chatType: params.scope.chatType,
+    outboundGroupReplyAuthorization: params.scope.outboundGroupReplyAuthorization,
   });
   if (!capabilityId) {
     return { kind: "not-applicable" };
@@ -176,6 +192,38 @@ export async function routeConversationalTurnWithBruno(params: {
 
   const traceId = boundedRef(params.traceId);
   const correlationId = boundedRef(params.correlationId) ?? boundedRef(params.sessionKey);
+
+  // The one-shot HIGH decision is host-derived. The opaque source event id
+  // points at the authoritative core override registry; a missing, consumed,
+  // or expired override fails closed rather than falling back to semantic
+  // classification (which would downgrade the authorized HIGH request).
+  let forcedTier: "high" | undefined;
+  if (params.highBrainSourceEventId) {
+    const claim = claimBrunoHighBrainOverrideForRouting(params.highBrainSourceEventId);
+    if (claim.status !== "authorized") {
+      log.warn("bruno_high_brain_routing_denied", {
+        reason: claim.status === "denied" ? claim.reason : "unavailable",
+      });
+      emitDecisionTelemetry({
+        capabilityId,
+        reason: "high-brain-override-denied",
+        requestedProvider: params.requestedProvider,
+        requestedModel: params.requestedModel,
+        sessionKey: params.sessionKey,
+        traceId,
+        correlationId,
+      });
+      return {
+        kind: "fail-closed",
+        reason: "no-acceptable-model",
+        message: BRUNO_MODEL_ROUTING_FAIL_CLOSED_TEXT,
+        capabilityId,
+        traceId,
+        correlationId,
+      };
+    }
+    forcedTier = "high";
+  }
 
   const router = getBrunoModelRouter();
   if (!router) {
@@ -204,6 +252,7 @@ export async function routeConversationalTurnWithBruno(params: {
       capabilityId,
       ...(traceId ? { traceId } : {}),
       ...(correlationId ? { correlationId } : {}),
+      ...(forcedTier ? { forcedTier } : {}),
     });
   } catch {
     emitDecisionTelemetry({
@@ -234,6 +283,34 @@ export async function routeConversationalTurnWithBruno(params: {
     }))
     .filter((candidate) => candidate.provider !== "" && candidate.model !== "");
   const classification = decision.classification;
+
+  // A forced HIGH request must never be downgraded to LOW/MEDIUM. The
+  // canonical policy filters candidates by complexity ceiling, but verify the
+  // returned classification anyway so a malformed router cannot silently
+  // reclassify an owner-authorized HIGH request.
+  if (forcedTier === "high" && classification?.complexity !== "high") {
+    emitDecisionTelemetry({
+      capabilityId,
+      complexity: classification?.complexity,
+      riskLevel: classification?.riskLevel,
+      policyVersion: decision.policyVersion,
+      reason: "high-brain-downgrade-blocked",
+      requestedProvider: params.requestedProvider,
+      requestedModel: params.requestedModel,
+      sessionKey: params.sessionKey,
+      traceId,
+      correlationId,
+    });
+    return {
+      kind: "fail-closed",
+      reason: "no-acceptable-model",
+      message: BRUNO_MODEL_ROUTING_FAIL_CLOSED_TEXT,
+      classification,
+      capabilityId,
+      traceId,
+      correlationId,
+    };
+  }
 
   if (decision.reason === "no_acceptable_model" || !selectedProvider || !selectedModel) {
     emitDecisionTelemetry({
@@ -366,25 +443,207 @@ export async function initializeBrunoModelRouting(params?: {
   return initializationPromise;
 }
 
+export type BrunoBrainRawClassification = {
+  task_type?: unknown;
+  complexity?: unknown;
+  risk_level?: unknown;
+  factors?: readonly unknown[];
+  rationale?: unknown;
+};
+
+export type BrunoBrainRawDecision = {
+  reason?: unknown;
+  selected_model?: { provider?: unknown; model_id?: unknown } | null;
+  policy_version?: unknown;
+  fallback_alternatives?: readonly { provider?: unknown; model_id?: unknown }[];
+  classification?: BrunoBrainRawClassification;
+};
+
 export type BrunoBrainModelRoutingModule = {
   routeModelWithPolicyForTurn?: (
     facts: unknown,
     candidates?: readonly unknown[],
     document?: unknown,
-  ) => {
-    reason?: unknown;
-    selected_model?: { provider?: unknown; model_id?: unknown } | null;
-    policy_version?: unknown;
-    fallback_alternatives?: readonly { provider?: unknown; model_id?: unknown }[];
-    classification?: {
-      task_type?: unknown;
-      complexity?: unknown;
-      risk_level?: unknown;
-      factors?: readonly unknown[];
-      rationale?: unknown;
-    };
-  };
+  ) => BrunoBrainRawDecision;
+  /**
+   * Canonical policy layer. Used only for the owner-authorized High Brain
+   * override to re-rank the same Bruno-approved candidates with complexity
+   * forced to HIGH; OpenClaw never hardcodes a provider or model here.
+   */
+  routeModelWithPolicy?: (
+    request: unknown,
+    candidates?: readonly unknown[],
+    document?: unknown,
+  ) => BrunoBrainRawDecision;
 };
+
+function mapRawReason(reason: unknown): BrunoModelRouterDecision["reason"] {
+  return reason === "selected" || reason === "fallback_selected" || reason === "no_acceptable_model"
+    ? reason
+    : "no_acceptable_model";
+}
+
+function mapRawSelection(
+  selected: { provider?: unknown; model_id?: unknown } | null | undefined,
+): BrunoModelRouterSelection | null {
+  return selected && typeof selected.provider === "string" && typeof selected.model_id === "string"
+    ? { provider: selected.provider, model: selected.model_id }
+    : null;
+}
+
+function mapRawFallbacks(
+  fallbacks: readonly { provider?: unknown; model_id?: unknown }[] | undefined,
+): BrunoModelRouterSelection[] | undefined {
+  return Array.isArray(fallbacks)
+    ? fallbacks
+        .filter(
+          (item): item is { provider: string; model_id: string } =>
+            Boolean(item) && typeof item.provider === "string" && typeof item.model_id === "string",
+        )
+        .map((item) => ({ provider: item.provider, model: item.model_id }))
+    : undefined;
+}
+
+function mapRawRiskLevel(riskLevel: unknown): BrunoModelRoutingClassification["riskLevel"] {
+  return riskLevel === "low" ||
+    riskLevel === "medium" ||
+    riskLevel === "high" ||
+    riskLevel === "critical"
+    ? riskLevel
+    : "medium";
+}
+
+function mapRawTaskType(taskType: unknown): BrunoModelRoutingClassification["taskType"] {
+  return taskType === "classification" || taskType === "summarization" || taskType === "extraction"
+    ? taskType
+    : "reasoning";
+}
+
+function mapRawClassification(
+  classification: BrunoBrainRawClassification | undefined,
+): BrunoModelRoutingClassification | undefined {
+  if (
+    !classification ||
+    typeof classification.complexity !== "string" ||
+    typeof classification.risk_level !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    taskType: mapRawTaskType(classification.task_type),
+    complexity:
+      classification.complexity === "low" ||
+      classification.complexity === "medium" ||
+      classification.complexity === "high"
+        ? classification.complexity
+        : "medium",
+    riskLevel: mapRawRiskLevel(classification.risk_level),
+    factors:
+      Array.isArray(classification.factors) &&
+      classification.factors.every((item) => typeof item === "string")
+        ? classification.factors
+        : undefined,
+    rationale: typeof classification.rationale === "string" ? classification.rationale : undefined,
+  };
+}
+
+function mapRawDecision(decision: BrunoBrainRawDecision): BrunoModelRouterDecision {
+  return {
+    reason: mapRawReason(decision.reason),
+    selectedModel: mapRawSelection(decision.selected_model),
+    fallbackAlternatives: mapRawFallbacks(decision.fallback_alternatives),
+    policyVersion:
+      typeof decision.policy_version === "string" ? decision.policy_version : undefined,
+    classification: mapRawClassification(decision.classification),
+  };
+}
+
+function buildBrunoBrainFacts(
+  facts: BrunoModelRoutingFacts,
+  context: { capabilityId: string; traceId?: string; correlationId?: string },
+): Record<string, unknown> {
+  return {
+    prompt_text: facts.promptText,
+    body_length: facts.bodyLength,
+    is_group: facts.isGroup,
+    sender_is_owner: facts.senderIsOwner,
+    command_authorized: facts.commandAuthorized,
+    capability_id: context.capabilityId,
+    ...(context.traceId ? { trace_id: context.traceId } : {}),
+    ...(context.correlationId ? { correlation_id: context.correlationId } : {}),
+  };
+}
+
+/**
+ * Applies the owner-authorized High Brain override by re-ranking the exact
+ * Bruno-approved candidates through the canonical policy layer with
+ * complexity forced to HIGH. No provider or model name appears in High Brain
+ * logic; the policy resolves the configured HIGH primary and approved HIGH
+ * fallback, and fails closed when no authorized HIGH route succeeds.
+ */
+function routeForcedHighBrainDecision(
+  module: Partial<BrunoBrainModelRoutingModule>,
+  semantic: BrunoBrainRawDecision,
+  context: { capabilityId: string; traceId?: string; correlationId?: string },
+): BrunoModelRouterDecision {
+  const routeModelWithPolicy = module.routeModelWithPolicy;
+  const semanticClassification = mapRawClassification(semantic.classification);
+  const candidates = [
+    ...(semantic.selected_model ? [semantic.selected_model] : []),
+    ...(semantic.fallback_alternatives ?? []),
+  ];
+  const forcedClassification: BrunoModelRoutingClassification = {
+    taskType: semanticClassification?.taskType ?? "reasoning",
+    complexity: "high",
+    riskLevel: semanticClassification?.riskLevel ?? "medium",
+    factors: [
+      "complexity:high",
+      `risk:${semanticClassification?.riskLevel ?? "medium"}`,
+      "high_brain_override",
+    ],
+    rationale: "Owner-authorized High Brain override forced HIGH classification.",
+  };
+
+  if (typeof routeModelWithPolicy !== "function" || candidates.length === 0) {
+    return {
+      reason: "no_acceptable_model",
+      selectedModel: null,
+      fallbackAlternatives: [],
+      policyVersion:
+        typeof semantic.policy_version === "string" ? semantic.policy_version : undefined,
+      classification: forcedClassification,
+    };
+  }
+
+  const request = {
+    task_type: forcedClassification.taskType,
+    complexity: "high",
+    risk_level: forcedClassification.riskLevel,
+    capability_id: context.capabilityId,
+    ...(context.traceId ? { trace_id: context.traceId } : {}),
+    ...(context.correlationId ? { correlation_id: context.correlationId } : {}),
+  };
+
+  let highDecision: BrunoBrainRawDecision;
+  try {
+    highDecision = routeModelWithPolicy(request, candidates) as BrunoBrainRawDecision;
+  } catch {
+    return {
+      reason: "no_acceptable_model",
+      selectedModel: null,
+      fallbackAlternatives: [],
+      policyVersion:
+        typeof semantic.policy_version === "string" ? semantic.policy_version : undefined,
+      classification: forcedClassification,
+    };
+  }
+
+  const mapped = mapRawDecision(highDecision);
+  return {
+    ...mapped,
+    classification: forcedClassification,
+  };
+}
 
 /** DEV-only wiring adapter. The specifier is env-configurable; never a hardcoded path. */
 export async function createBrunoBrainModelRouter(params?: {
@@ -407,77 +666,13 @@ export async function createBrunoBrainModelRouter(params?: {
   }
   return {
     route(facts, context) {
-      const decision = routeModelWithPolicyForTurn({
-        prompt_text: facts.promptText,
-        body_length: facts.bodyLength,
-        is_group: facts.isGroup,
-        sender_is_owner: facts.senderIsOwner,
-        command_authorized: facts.commandAuthorized,
-        capability_id: context.capabilityId,
-        ...(context.traceId ? { trace_id: context.traceId } : {}),
-        ...(context.correlationId ? { correlation_id: context.correlationId } : {}),
-      });
-      const selected = decision.selected_model;
-      const classification = decision.classification;
-      return {
-        reason:
-          decision.reason === "selected" ||
-          decision.reason === "fallback_selected" ||
-          decision.reason === "no_acceptable_model"
-            ? decision.reason
-            : "no_acceptable_model",
-        selectedModel:
-          selected && typeof selected.provider === "string" && typeof selected.model_id === "string"
-            ? { provider: selected.provider, model: selected.model_id }
-            : null,
-        fallbackAlternatives: Array.isArray(decision.fallback_alternatives)
-          ? decision.fallback_alternatives
-              .filter(
-                (item): item is { provider: string; model_id: string } =>
-                  Boolean(item) &&
-                  typeof item.provider === "string" &&
-                  typeof item.model_id === "string",
-              )
-              .map((item) => ({ provider: item.provider, model: item.model_id }))
-          : undefined,
-        policyVersion:
-          typeof decision.policy_version === "string" ? decision.policy_version : undefined,
-        classification:
-          classification &&
-          typeof classification.complexity === "string" &&
-          typeof classification.risk_level === "string"
-            ? {
-                taskType:
-                  classification.task_type === "classification" ||
-                  classification.task_type === "summarization" ||
-                  classification.task_type === "extraction"
-                    ? classification.task_type
-                    : "reasoning",
-                complexity:
-                  classification.complexity === "low" ||
-                  classification.complexity === "medium" ||
-                  classification.complexity === "high"
-                    ? classification.complexity
-                    : "medium",
-                riskLevel:
-                  classification.risk_level === "low" ||
-                  classification.risk_level === "medium" ||
-                  classification.risk_level === "high" ||
-                  classification.risk_level === "critical"
-                    ? classification.risk_level
-                    : "medium",
-                factors:
-                  Array.isArray(classification.factors) &&
-                  classification.factors.every((item) => typeof item === "string")
-                    ? classification.factors
-                    : undefined,
-                rationale:
-                  typeof classification.rationale === "string"
-                    ? classification.rationale
-                    : undefined,
-              }
-            : undefined,
-      };
+      const decision = routeModelWithPolicyForTurn(
+        buildBrunoBrainFacts(facts, context),
+      ) as BrunoBrainRawDecision;
+      if (context.forcedTier === "high") {
+        return routeForcedHighBrainDecision(module, decision, context);
+      }
+      return mapRawDecision(decision);
     },
   };
 }

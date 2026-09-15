@@ -176,6 +176,11 @@ vi.mock("./runtime-api.js", async (importOriginal) => {
 
 import { clearInternalHooks, registerInternalHook } from "openclaw/plugin-sdk/hook-runtime";
 import { attachWhatsAppIngressLifecycle } from "../../inbound/ingress-lifecycle.js";
+import {
+  resetWhatsAppHighBrainClassificationRegistrarForTests,
+  setWhatsAppHighBrainClassificationRegistrar,
+  type WhatsAppHighBrainClassificationRegistrar,
+} from "../../runtime.js";
 import { processMessage } from "./process-message.js";
 
 // ---------------------------------------------------------------------------
@@ -265,6 +270,7 @@ function callProcessMessage(
     groupHistories?: Map<string, unknown[]>;
     msg?: unknown;
     messageReceivedEmitted?: boolean;
+    replyLogger?: { warn: (obj: unknown, msg: string) => void };
   } = {},
 ) {
   return processMessage({
@@ -280,7 +286,12 @@ function callProcessMessage(
     maxMediaBytes: 1024,
     dispatchReplyFromConfig: overrides.dispatchReplyFromConfig,
     replyResolver: (async () => undefined) as never,
-    replyLogger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as never,
+    replyLogger: (overrides.replyLogger ?? {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+    }) as never,
     backgroundTasks: new Set(),
   });
 }
@@ -700,5 +711,248 @@ describe("processMessage group system prompt wiring", () => {
     expect(trackBackgroundTaskMock).not.toHaveBeenCalled();
     expect(dispatchBufferedReplyMock).not.toHaveBeenCalled();
     expect(runMessageReceivedMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("processMessage High Brain DM trigger", () => {
+  const highBrainRegistrarMock = vi.fn<WhatsAppHighBrainClassificationRegistrar>();
+
+  function makeDmMsg(body: string, eventId = "dm-high-brain-1") {
+    return createTestWebInboundMessage({
+      event: { id: eventId, timestamp: 1710000000 },
+      payload: { body },
+      platform: {
+        chatJid: "+15550002222",
+        recipientJid: "+15550001111",
+        senderJid: "15550002222@s.whatsapp.net",
+        senderE164: "+15550002222",
+        senderName: "Alice",
+        sendComposing: async () => {},
+        reply: async () => createAcceptedWhatsAppSendResult("text", "r1"),
+        sendMedia: async () => createAcceptedWhatsAppSendResult("media", "m1"),
+      },
+      admission: {
+        accountId: "default",
+        conversation: { kind: "direct", id: "+15550002222" },
+        sender: { id: "+15550002222" },
+        senderAccess: { reasonCode: "dm_policy_allowlisted" },
+      },
+    });
+  }
+
+  beforeEach(() => {
+    buildContextMock.mockReset();
+    resolvePolicyMock.mockReset();
+    shouldComputeCommandAuthorizedMock.mockReset();
+    shouldComputeCommandAuthorizedMock.mockReturnValue(false);
+    isControlCommandMessageMock.mockReset();
+    isControlCommandMessageMock.mockReturnValue(false);
+    dispatchBufferedReplyMock.mockClear();
+    runChannelInboundEventParamsMock.mockClear();
+    runMessageReceivedMock.mockClear();
+    trackBackgroundTaskMock.mockClear();
+    highBrainRegistrarMock.mockClear();
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    setWhatsAppHighBrainClassificationRegistrar(highBrainRegistrarMock);
+    buildContextMock.mockImplementation((params: { bodyForAgent?: string }) => ({
+      Body: params.bodyForAgent ?? "",
+      BodyForAgent: params.bodyForAgent ?? "",
+      ChatType: "direct",
+      Provider: "whatsapp",
+      CommandAuthorized: false,
+    }));
+  });
+
+  afterEach(() => {
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+  });
+
+  it("strips the trigger prefix and registers a one-shot HIGH override for an owner DM", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    await callProcessMessage({
+      msg: makeDmMsg("Bruno, high brain: Plan the production rollout"),
+    });
+    const buildParams = mockCallArg(buildContextMock, "buildWhatsAppInboundContext") as {
+      bodyForAgent?: string;
+    };
+    expect(buildParams.bodyForAgent).toBe("Plan the production rollout");
+    expect(highBrainRegistrarMock).toHaveBeenCalledTimes(1);
+    expect(highBrainRegistrarMock.mock.calls[0]?.[0]).toMatchObject({
+      policyVersion: 1,
+      mode: "dm",
+      requestedTier: "high",
+    });
+    const builtContext = buildContextMock.mock.results[0]?.value as
+      | { BrunoHighBrain?: { sourceEventId: string } }
+      | undefined;
+    expect(builtContext?.BrunoHighBrain?.sourceEventId).toBeTruthy();
+  });
+
+  it("fails closed for an exact non-owner High Brain DM with no privileged or ordinary processing", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: [],
+    });
+    const msg = makeDmMsg("Bruno, high brain: Plan the production rollout");
+    const result = await callProcessMessage({ msg });
+    expect(result).toBe(false);
+    expect(msg.highBrain).toBeUndefined();
+    expect(buildContextMock).not.toHaveBeenCalled();
+    expect(dispatchBufferedReplyMock).not.toHaveBeenCalled();
+    expect(runChannelInboundEventParamsMock).not.toHaveBeenCalled();
+    expect(highBrainRegistrarMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the High Brain registrar is unavailable for an exact owner DM", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    const msg = makeDmMsg("Bruno, high brain: Plan the production rollout");
+    const result = await callProcessMessage({ msg });
+    expect(result).toBe(false);
+    expect(msg.highBrain).toBeUndefined();
+    expect(buildContextMock).not.toHaveBeenCalled();
+    expect(dispatchBufferedReplyMock).not.toHaveBeenCalled();
+    expect(runChannelInboundEventParamsMock).not.toHaveBeenCalled();
+    expect(highBrainRegistrarMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the High Brain registrar throws for an exact owner DM", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    const throwing = vi.fn<WhatsAppHighBrainClassificationRegistrar>(() => {
+      throw new Error("registrar boom");
+    });
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    setWhatsAppHighBrainClassificationRegistrar(throwing);
+    const msg = makeDmMsg("Bruno, high brain: Plan the production rollout");
+    const result = await callProcessMessage({ msg });
+    expect(result).toBe(false);
+    expect(msg.highBrain).toBeUndefined();
+    expect(buildContextMock).not.toHaveBeenCalled();
+    expect(dispatchBufferedReplyMock).not.toHaveBeenCalled();
+    expect(runChannelInboundEventParamsMock).not.toHaveBeenCalled();
+    expect(throwing).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes the following ordinary DM through normal semantic processing", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    await callProcessMessage({
+      msg: makeDmMsg("Bruno, high brain: Plan the production rollout"),
+    });
+    buildContextMock.mockClear();
+    dispatchBufferedReplyMock.mockClear();
+    runChannelInboundEventParamsMock.mockClear();
+
+    const result = await callProcessMessage({ msg: makeDmMsg("hello there", "dm-ordinary-1") });
+    expect(result).toBe(true);
+    expect(mockCallArg(buildContextMock, "buildWhatsAppInboundContext")).toMatchObject({
+      bodyForAgent: "hello there",
+    });
+    expect(dispatchBufferedReplyMock).toHaveBeenCalled();
+    expect(runChannelInboundEventParamsMock).toHaveBeenCalled();
+  });
+
+  it("isolates concurrent unrelated DMs so neither inherits the other's override", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    await Promise.all([
+      callProcessMessage({
+        msg: makeDmMsg("Bruno, high brain: first query", "dm-concurrent-a"),
+      }),
+      callProcessMessage({
+        msg: makeDmMsg("Bruno, high brain: second query", "dm-concurrent-b"),
+      }),
+    ]);
+    expect(highBrainRegistrarMock).toHaveBeenCalledTimes(2);
+    const firstSource = highBrainRegistrarMock.mock.calls[0]?.[0] as
+      | { sourceEventId: string }
+      | undefined;
+    const secondSource = highBrainRegistrarMock.mock.calls[1]?.[0] as
+      | { sourceEventId: string }
+      | undefined;
+    expect(firstSource?.sourceEventId).toBeTruthy();
+    expect(secondSource?.sourceEventId).toBeTruthy();
+    expect(firstSource?.sourceEventId).not.toBe(secondSource?.sourceEventId);
+    const contexts = buildContextMock.mock.results.map(
+      (result) => result.value as { BrunoHighBrain?: { sourceEventId: string } } | undefined,
+    );
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]?.BrunoHighBrain?.sourceEventId).toBe(firstSource?.sourceEventId);
+    expect(contexts[1]?.BrunoHighBrain?.sourceEventId).toBe(secondSource?.sourceEventId);
+  });
+
+  it("does not let a denied attempt poison, block, or authorize a later legitimate event", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    await callProcessMessage({
+      msg: makeDmMsg("Bruno, high brain: denied attempt", "dm-denied-1"),
+    });
+    expect(buildContextMock).not.toHaveBeenCalled();
+
+    setWhatsAppHighBrainClassificationRegistrar(highBrainRegistrarMock);
+    buildContextMock.mockClear();
+    dispatchBufferedReplyMock.mockClear();
+    runChannelInboundEventParamsMock.mockClear();
+    const result = await callProcessMessage({
+      msg: makeDmMsg("Bruno, high brain: later legitimate query", "dm-later-1"),
+    });
+    expect(result).toBe(true);
+    expect(mockCallArg(buildContextMock, "buildWhatsAppInboundContext")).toMatchObject({
+      bodyForAgent: "later legitimate query",
+    });
+    expect(highBrainRegistrarMock).toHaveBeenCalledTimes(1);
+    const builtContext = buildContextMock.mock.results[0]?.value as
+      | { BrunoHighBrain?: { sourceEventId: string } }
+      | undefined;
+    expect(builtContext?.BrunoHighBrain?.sourceEventId).toBeTruthy();
+  });
+
+  it("emits only content-free denial evidence for a denied High Brain DM", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    const warn = vi.fn<(obj: unknown, msg: string) => void>();
+    await callProcessMessage({
+      msg: makeDmMsg("Bruno, high brain: never log this query", "dm-audit-1"),
+      replyLogger: { warn },
+    });
+    expect(warn).toHaveBeenCalled();
+    const firstCall = warn.mock.calls[0];
+    const evidence = firstCall?.[0] as Record<string, unknown> | undefined;
+    expect(evidence).toMatchObject({ reason: "high_brain_registration_unavailable" });
+    expect(Object.keys(evidence ?? {})).toEqual(["reason"]);
+    const logged = JSON.stringify([firstCall?.[0], firstCall?.[1]]);
+    expect(logged).not.toContain("never log this query");
+    expect(logged).not.toContain("+15550002222");
+    expect(logged).not.toContain("dm-audit-1");
+    expect(logged).not.toContain("token");
+  });
+
+  it("does not activate a malformed DM trigger", async () => {
+    resolvePolicyMock.mockReturnValue({
+      ...makePolicy(makeAccount()),
+      configuredAllowFrom: ["+15550002222"],
+    });
+    await callProcessMessage({ msg: makeDmMsg("Bruno, high brain:") });
+    expect(highBrainRegistrarMock).not.toHaveBeenCalled();
   });
 });

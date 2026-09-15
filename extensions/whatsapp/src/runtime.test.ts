@@ -1,15 +1,21 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 // Whatsapp tests cover runtime injection across plugin registry reloads.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setWhatsAppHighBrainClassificationRegistrar as setHighBrainViaSidecar } from "../runtime-setter-api.js";
 import {
   getOptionalWhatsAppChannelRuntime,
+  getOptionalWhatsAppHighBrainClassificationRegistrar,
   getOptionalWhatsAppOutboundAuthorizationRegistrar,
   getWhatsAppChannelRuntime,
+  getWhatsAppHighBrainClassificationRegistrar,
   getWhatsAppOutboundAuthorizationRegistrar,
   getWhatsAppRuntime,
+  resetWhatsAppHighBrainClassificationRegistrarForTests,
   resetWhatsAppOutboundAuthorizationRegistrarForTests,
+  setWhatsAppHighBrainClassificationRegistrar,
   setWhatsAppOutboundAuthorizationRegistrar,
   setWhatsAppRuntime,
+  type WhatsAppHighBrainClassificationRegistrar,
   type WhatsAppOutboundAuthorizationRegistrar,
 } from "./runtime.js";
 
@@ -19,6 +25,7 @@ function fakeRegistrar(): WhatsAppOutboundAuthorizationRegistrar {
 
 afterEach(() => {
   resetWhatsAppOutboundAuthorizationRegistrarForTests();
+  resetWhatsAppHighBrainClassificationRegistrarForTests();
 });
 
 describe("WhatsApp runtime", () => {
@@ -62,5 +69,46 @@ describe("WhatsApp outbound authorization registrar injection", () => {
     expect(getOptionalWhatsAppOutboundAuthorizationRegistrar()).not.toBeNull();
     resetWhatsAppOutboundAuthorizationRegistrarForTests();
     expect(getOptionalWhatsAppOutboundAuthorizationRegistrar()).toBeNull();
+  });
+});
+
+describe("WhatsApp High Brain classification registrar injection", () => {
+  it("fails closed before trusted host initialization", () => {
+    expect(getOptionalWhatsAppHighBrainClassificationRegistrar()).toBeNull();
+    expect(() => getWhatsAppHighBrainClassificationRegistrar()).toThrow(
+      /High Brain classification registrar not initialized/u,
+    );
+  });
+
+  it("supplies the registrar from trusted host initialization", () => {
+    const registrar = vi.fn() as unknown as WhatsAppHighBrainClassificationRegistrar;
+    setWhatsAppHighBrainClassificationRegistrar(registrar);
+    expect(getWhatsAppHighBrainClassificationRegistrar()).toBe(registrar);
+    expect(getOptionalWhatsAppHighBrainClassificationRegistrar()).toBe(registrar);
+  });
+
+  it("never swaps in a later registrar after first initialization", () => {
+    const first = vi.fn() as unknown as WhatsAppHighBrainClassificationRegistrar;
+    const second = vi.fn() as unknown as WhatsAppHighBrainClassificationRegistrar;
+    setWhatsAppHighBrainClassificationRegistrar(first);
+    setWhatsAppHighBrainClassificationRegistrar(second);
+    expect(getWhatsAppHighBrainClassificationRegistrar()).toBe(first);
+    expect(getWhatsAppHighBrainClassificationRegistrar()).not.toBe(second);
+  });
+
+  it("shares one private registrar binding between the setter sidecar and the consumer", () => {
+    const registrar = vi.fn() as unknown as WhatsAppHighBrainClassificationRegistrar;
+    setHighBrainViaSidecar(registrar);
+    expect(getOptionalWhatsAppHighBrainClassificationRegistrar()).toBe(registrar);
+    expect(getWhatsAppHighBrainClassificationRegistrar()).toBe(registrar);
+  });
+
+  it("isolates the registrar slot for tests", () => {
+    setWhatsAppHighBrainClassificationRegistrar(
+      vi.fn() as unknown as WhatsAppHighBrainClassificationRegistrar,
+    );
+    expect(getOptionalWhatsAppHighBrainClassificationRegistrar()).not.toBeNull();
+    resetWhatsAppHighBrainClassificationRegistrarForTests();
+    expect(getOptionalWhatsAppHighBrainClassificationRegistrar()).toBeNull();
   });
 });

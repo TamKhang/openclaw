@@ -1248,11 +1248,18 @@ export async function getReplyFromConfig(
   }
 
   if (!directives.hasModelDirective) {
+    const brunoHighBrainSourceEventId = finalized.BrunoHighBrain?.sourceEventId;
     const brunoRoutingResult = await routeConversationalTurnWithBruno({
       enabled: isBrunoModelRoutingEnabled(),
       scope: {
         messageProvider: finalized.Provider ?? sessionCtx.Provider,
         chatType: finalized.ChatType ?? sessionCtx.ChatType,
+        // Only High Brain group turns carry the delegated reply authorization
+        // into the routing scope; ordinary "Bruno, come in" group replies stay
+        // on the default model-selection path (Task 1 behavior preserved).
+        ...(brunoHighBrainSourceEventId
+          ? { outboundGroupReplyAuthorization: finalized.OutboundGroupReplyAuthorization ?? null }
+          : {}),
       },
       facts: {
         promptText: normalizeOptionalString(cleanedBody) ?? cleanedBody,
@@ -1265,6 +1272,7 @@ export async function getReplyFromConfig(
       traceId: randomUUID(),
       requestedProvider: runProvider,
       requestedModel: runModel,
+      highBrainSourceEventId: brunoHighBrainSourceEventId,
     });
     if (brunoRoutingResult.kind === "fail-closed") {
       typing.cleanup();

@@ -55,6 +55,56 @@ function resetWhatsAppOutboundAuthorizationRegistrarForTests(): void {
   outboundAuthorizationRegistrar = null;
 }
 
+/**
+ * Trusted host-owned High Brain classification override registrar. Mirrors the
+ * core `BrunoHighBrainOverride` contract (src/agents/bruno-high-brain.ts)
+ * without importing core internals; the injected core registrar validates the
+ * shape and fails closed on mismatch. HIGH routing authority never authorizes
+ * an outbound group message.
+ */
+export type WhatsAppHighBrainClassificationOverride = {
+  policyVersion: 1;
+  sourceEventId: string;
+  mode: "dm" | "group";
+  requestedTier: "high";
+  createdAt: number;
+  expiresAt: number;
+};
+
+export type WhatsAppHighBrainClassificationRegistrar = (
+  override: WhatsAppHighBrainClassificationOverride,
+) => void;
+
+// Private module-lexical High Brain classification registrar slot, separate
+// from the send-authorization registrar above so HIGH routing authority never
+// doubles as send authority.
+let highBrainClassificationRegistrar: WhatsAppHighBrainClassificationRegistrar | null = null;
+
+/** First trusted host injection wins; later calls cannot swap the registrar. */
+function setWhatsAppHighBrainClassificationRegistrar(
+  next: WhatsAppHighBrainClassificationRegistrar,
+): void {
+  if (highBrainClassificationRegistrar === null) {
+    highBrainClassificationRegistrar = next;
+  }
+}
+
+function getWhatsAppHighBrainClassificationRegistrar(): WhatsAppHighBrainClassificationRegistrar {
+  if (highBrainClassificationRegistrar === null) {
+    throw new Error("WhatsApp High Brain classification registrar not initialized");
+  }
+  return highBrainClassificationRegistrar;
+}
+
+function getOptionalWhatsAppHighBrainClassificationRegistrar(): WhatsAppHighBrainClassificationRegistrar | null {
+  return highBrainClassificationRegistrar;
+}
+
+/** Test-only reset; tree-shaken from compiled production entry exports. */
+function resetWhatsAppHighBrainClassificationRegistrarForTests(): void {
+  highBrainClassificationRegistrar = null;
+}
+
 /** Injects current helpers while preserving the process-lifetime channel context owner. */
 function setWhatsAppRuntime(next: PluginRuntime): void {
   // Plugin registry reloads create fresh runtime objects. Live connection leases must remain
@@ -72,12 +122,16 @@ const getOptionalWhatsAppChannelRuntime = channelRuntimeStore.tryGetRuntime;
 
 export {
   getOptionalWhatsAppChannelRuntime,
+  getOptionalWhatsAppHighBrainClassificationRegistrar,
   getOptionalWhatsAppOutboundAuthorizationRegistrar,
   getOptionalWhatsAppRuntime,
   getWhatsAppChannelRuntime,
+  getWhatsAppHighBrainClassificationRegistrar,
   getWhatsAppOutboundAuthorizationRegistrar,
   getWhatsAppRuntime,
+  resetWhatsAppHighBrainClassificationRegistrarForTests,
   resetWhatsAppOutboundAuthorizationRegistrarForTests,
+  setWhatsAppHighBrainClassificationRegistrar,
   setWhatsAppOutboundAuthorizationRegistrar,
   setWhatsAppRuntime,
 };

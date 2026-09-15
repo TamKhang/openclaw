@@ -133,6 +133,11 @@ export type WebInboundCallbackMessage = {
   quote?: WhatsAppInboundQuote;
   group?: WhatsAppInboundGroupContext;
   groupReplyOnce?: GroupReplyOnceAuthorization;
+  /** Host-derived one-shot Bruno High Brain classification override marker. */
+  highBrain?: {
+    sourceEventId: string;
+    mode: "dm" | "group";
+  };
   wasMentioned?: boolean;
   groupMention?: {
     wasMentioned: boolean;

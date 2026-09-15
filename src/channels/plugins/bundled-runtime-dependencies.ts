@@ -7,12 +7,15 @@
 // never sufficient: trust is anchored in `origin === "bundled"`, which is
 // assigned by trusted loader discovery and cannot be supplied by plugin
 // manifest content.
+import { registerBrunoHighBrainOverride } from "../../agents/bruno-high-brain.js";
 import { registerWhatsAppOutboundAuthorization } from "../../infra/outbound/whatsapp-outbound-authorization.js";
 import type { PluginOrigin } from "../../plugins/plugin-origin.types.js";
 
 const WHATSAPP_PLUGIN_ID = "whatsapp";
 const WHATSAPP_OUTBOUND_AUTHORIZATION_REGISTRATION_CAPABILITY =
   "whatsapp:outbound-authorization-registration";
+const WHATSAPP_HIGH_BRAIN_CLASSIFICATION_REGISTRATION_CAPABILITY =
+  "whatsapp:high-brain-classification-registration";
 const BUNDLED_CHANNEL_ENTRY_KIND = "bundled-channel-entry";
 
 function includesBundledChannelEntryKind(kind: unknown): boolean {
@@ -43,16 +46,19 @@ export function resolveBundledChannelRuntimeDependency(params: {
   pluginId: string;
   capability: string;
 }): unknown {
-  // The privileged registrar resolves only for the exact canonical pair.
-  // There is deliberately no generic owner-prefix/key rule here: another
-  // bundled channel that declares its own-namespaced
-  // "outbound-authorization-registration" capability must never receive the
-  // WhatsApp registrar.
-  if (
-    params.pluginId === WHATSAPP_PLUGIN_ID &&
-    params.capability === WHATSAPP_OUTBOUND_AUTHORIZATION_REGISTRATION_CAPABILITY
-  ) {
-    return registerWhatsAppOutboundAuthorization;
+  // The privileged registrars resolve only for exact canonical pairs. There is
+  // deliberately no generic owner-prefix/key rule here: another bundled
+  // channel that declares its own-namespaced capability must never receive a
+  // WhatsApp registrar. The High Brain classification registrar is a separate
+  // authority from the send authorization registrar; HIGH routing authority
+  // never itself authorizes an outbound group message.
+  if (params.pluginId === WHATSAPP_PLUGIN_ID) {
+    if (params.capability === WHATSAPP_OUTBOUND_AUTHORIZATION_REGISTRATION_CAPABILITY) {
+      return registerWhatsAppOutboundAuthorization;
+    }
+    if (params.capability === WHATSAPP_HIGH_BRAIN_CLASSIFICATION_REGISTRATION_CAPABILITY) {
+      return registerBrunoHighBrainOverride;
+    }
   }
   return undefined;
 }

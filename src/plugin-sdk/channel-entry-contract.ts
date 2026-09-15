@@ -61,11 +61,11 @@ type DefineBundledChannelEntryOptions<TPlugin = ChannelPlugin> = {
   secrets?: BundledEntryModuleRef;
   configSchema?: ChannelEntryConfigSchema<TPlugin> | (() => ChannelEntryConfigSchema<TPlugin>);
   runtime?: BundledEntryModuleRef;
-  /** Optional trusted runtime dependency injected by the host after channel registration. */
-  runtimeDependencies?: {
+  /** Optional trusted runtime dependencies injected by the host after channel registration. */
+  runtimeDependencies?: readonly {
     capability: string;
     setter: BundledEntryModuleRef;
-  };
+  }[];
   accountInspect?: BundledEntryModuleRef;
   features?: BundledChannelEntryFeatures;
   registerCliMetadata?: (api: OpenClawPluginApi) => void;
@@ -127,6 +127,8 @@ export type BundledChannelEntryContract<TPlugin = ChannelPlugin> = {
   setChannelRuntimeDependencies?: (deps: unknown) => void;
   /** Capability name requested through setChannelRuntimeDependencies. */
   runtimeDependencyCapability?: string;
+  /** Built host-resolved, trusted channel runtime dependency pairs. */
+  runtimeDependencies?: readonly { capability: string; setter: (deps: unknown) => void }[];
 };
 
 /** Runtime contract returned by a bundled channel's setup-only entrypoint definition. */
@@ -558,15 +560,17 @@ export function defineBundledChannelEntry<TPlugin = ChannelPlugin>({
         setter(pluginRuntime);
       }
     : undefined;
-  const setChannelRuntimeDependencies = runtimeDependencies
-    ? (deps: unknown) => {
-        const setter = loadBundledEntryExportSync<(deps: unknown) => void>(
-          importMetaUrl,
-          runtimeDependencies.setter,
-        );
-        setter(deps);
-      }
-    : undefined;
+  const builtRuntimeDependencies = (runtimeDependencies ?? []).map(({ capability, setter }) => ({
+    capability,
+    setter: (deps: unknown) => {
+      const apply = loadBundledEntryExportSync<(deps: unknown) => void>(importMetaUrl, setter);
+      apply(deps);
+    },
+  }));
+  // Legacy single-pair projection kept for existing consumers and loader
+  // compatibility; the authoritative list is `runtimeDependencies`.
+  const setChannelRuntimeDependencies = builtRuntimeDependencies[0]?.setter;
+  const runtimeDependencyCapability = builtRuntimeDependencies[0]?.capability;
 
   return {
     kind: "bundled-channel-entry",
@@ -613,8 +617,11 @@ export function defineBundledChannelEntry<TPlugin = ChannelPlugin>({
     ...(loadChannelSecrets ? { loadChannelSecrets } : {}),
     ...(loadChannelAccountInspector ? { loadChannelAccountInspector } : {}),
     ...(setChannelRuntime ? { setChannelRuntime } : {}),
+    ...(builtRuntimeDependencies.length > 0
+      ? { runtimeDependencies: builtRuntimeDependencies }
+      : {}),
     ...(setChannelRuntimeDependencies ? { setChannelRuntimeDependencies } : {}),
-    ...(runtimeDependencies ? { runtimeDependencyCapability: runtimeDependencies.capability } : {}),
+    ...(runtimeDependencyCapability ? { runtimeDependencyCapability } : {}),
   };
 }
 

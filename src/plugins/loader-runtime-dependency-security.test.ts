@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { registerBrunoHighBrainOverride } from "../agents/bruno-high-brain.js";
 import { registerWhatsAppOutboundAuthorization } from "../infra/outbound/whatsapp-outbound-authorization.js";
 import { withEnv } from "../test-utils/env.js";
 import { loadOpenClawPlugins } from "./loader.js";
@@ -374,5 +375,161 @@ describe("bundled runtime-dependency injection trust gate", () => {
     expect(record?.origin).toBe("bundled");
     expect(readMarker(markerKey)).toMatchObject({ setterRead: true, setterCalled: true });
     expect(readMarker(markerKey)?.deps).toBe(registerWhatsAppOutboundAuthorization);
+  });
+});
+
+describe("bundled runtime-dependency list (duplicates and hostile entries)", () => {
+  const HIGH_BRAIN_CAPABILITY = "whatsapp:high-brain-classification-registration";
+
+  function writeListPlugin(body: string): { dir: string; file: string } {
+    useNoBundledPlugins();
+    const dir = makePluginLoaderTempDir();
+    const file = path.join(dir, "whatsapp.cjs");
+    fs.writeFileSync(file, body, "utf8");
+    fs.writeFileSync(
+      path.join(dir, "openclaw.plugin.json"),
+      JSON.stringify(
+        { id: "whatsapp", configSchema: EMPTY_PLUGIN_SCHEMA, channels: ["whatsapp"] },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return { dir, file };
+  }
+
+  function loadBundled(dir: string) {
+    return withEnv(
+      {
+        OPENCLAW_BUNDLED_PLUGINS_DIR: dir,
+        OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
+        OPENCLAW_STATE_DIR: makePluginLoaderTempDir(),
+      },
+      () =>
+        loadOpenClawPlugins({
+          cache: false,
+          config: {
+            plugins: {
+              entries: { whatsapp: { enabled: true } },
+            },
+          },
+        }),
+    );
+  }
+
+  it("resolves duplicate capability entries to the same singleton without replacing the registrar", () => {
+    const markerKey = `__runtimeDependencyListDup_${Math.random().toString(36).slice(2)}`;
+    markerKeys.add(markerKey);
+    const { dir } = writeListPlugin(`
+globalThis[${JSON.stringify(markerKey)}] = { calls: [] };
+module.exports = {
+  id: "whatsapp",
+  kind: "bundled-channel-entry",
+  register() {},
+  runtimeDependencies: [
+    { capability: ${JSON.stringify(HIGH_BRAIN_CAPABILITY)}, setter(deps) { globalThis[${JSON.stringify(markerKey)}].calls.push(deps); } },
+    { capability: ${JSON.stringify(HIGH_BRAIN_CAPABILITY)}, setter(deps) { globalThis[${JSON.stringify(markerKey)}].calls.push(deps); } },
+  ],
+};
+`);
+    const registry = loadBundled(dir);
+    const record = registry.plugins.find((entry) => entry.id === "whatsapp");
+    expect(record?.status).toBe("loaded");
+    const marker = readMarker(markerKey) as { calls: unknown[] } | undefined;
+    expect(marker?.calls).toHaveLength(2);
+    expect(marker?.calls[0]).toBe(registerBrunoHighBrainOverride);
+    expect(marker?.calls[1]).toBe(registerBrunoHighBrainOverride);
+  });
+
+  it("never invokes hostile list entries whose capability or setter is not the expected shape", () => {
+    const markerKey = `__runtimeDependencyListHostile_${Math.random().toString(36).slice(2)}`;
+    markerKeys.add(markerKey);
+    const { dir } = writeListPlugin(`
+const calls = [];
+globalThis[${JSON.stringify(markerKey)}] = { calls };
+const validSetter = function (deps) { calls.push(["valid", deps]); };
+const hostileSetterGetter = {};
+Object.defineProperty(hostileSetterGetter, "setter", {
+  enumerable: true,
+  configurable: true,
+  get() { return "not-a-function"; },
+});
+module.exports = {
+  id: "whatsapp",
+  kind: "bundled-channel-entry",
+  register() {},
+  runtimeDependencies: [
+    { capability: ${JSON.stringify(HIGH_BRAIN_CAPABILITY)}, setter: validSetter },
+    { capability: ${JSON.stringify(HIGH_BRAIN_CAPABILITY)}, setter: "not-a-function" },
+    { capability: 123, setter: validSetter },
+    null,
+    { capability: "", setter: validSetter },
+    hostileSetterGetter,
+  ],
+};
+`);
+    const registry = loadBundled(dir);
+    const record = registry.plugins.find((entry) => entry.id === "whatsapp");
+    expect(record?.status).toBe("loaded");
+    const marker = readMarker(markerKey) as { calls: Array<[string, unknown]> } | undefined;
+    // Only the single valid entry is invoked, with the exact core singleton.
+    expect(marker?.calls).toEqual([["valid", registerBrunoHighBrainOverride]]);
+  });
+
+  it("contains a hostile runtimeDependencies getter that is not an array", () => {
+    const markerKey = `__runtimeDependencyListGetter_${Math.random().toString(36).slice(2)}`;
+    markerKeys.add(markerKey);
+    const { dir } = writeListPlugin(`
+globalThis[${JSON.stringify(markerKey)}] = { calls: 0 };
+const entry = {
+  id: "whatsapp",
+  kind: "bundled-channel-entry",
+  register() {},
+};
+Object.defineProperty(entry, "runtimeDependencies", {
+  enumerable: true,
+  configurable: true,
+  get() {
+    globalThis[${JSON.stringify(markerKey)}].calls += 1;
+    return "not-an-array";
+  },
+});
+module.exports = entry;
+`);
+    const registry = loadBundled(dir);
+    const record = registry.plugins.find((entry) => entry.id === "whatsapp");
+    expect(record?.status).toBe("loaded");
+    const marker = readMarker(markerKey) as { calls: number } | undefined;
+    // The getter may be read, but a non-array list resolves to zero dependencies
+    // and no privileged setter is ever invoked.
+    expect(marker?.calls).toBeGreaterThanOrEqual(1);
+    expect(record?.status).toBe("loaded");
+  });
+
+  it("contains a hostile setter that throws and fails the plugin closed", () => {
+    const markerKey = `__runtimeDependencyListThrows_${Math.random().toString(36).slice(2)}`;
+    markerKeys.add(markerKey);
+    const { dir } = writeListPlugin(`
+globalThis[${JSON.stringify(markerKey)}] = { calls: 0 };
+module.exports = {
+  id: "whatsapp",
+  kind: "bundled-channel-entry",
+  register() {},
+  runtimeDependencies: [
+    { capability: ${JSON.stringify(CAPABILITY)}, setter() { globalThis[${JSON.stringify(markerKey)}].calls += 1; } },
+    { capability: ${JSON.stringify(HIGH_BRAIN_CAPABILITY)}, setter() { throw new Error("hostile setter"); } },
+  ],
+};
+`);
+    // The injection loop is wrapped in a rollback try/catch: the throw must not
+    // escape the loader.
+    const registry = loadBundled(dir);
+    const record = registry.plugins.find((entry) => entry.id === "whatsapp");
+    expect(record?.status).toBe("error");
+    expect(record?.error).toContain("hostile setter");
+    const marker = readMarker(markerKey) as { calls: number } | undefined;
+    // The first (send) dependency was applied before the failure, but the whole
+    // register phase is rolled back so no partial privileged injection is kept.
+    expect(marker?.calls).toBe(1);
   });
 });

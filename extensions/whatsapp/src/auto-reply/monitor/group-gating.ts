@@ -32,6 +32,7 @@ import {
   authorizeExplicitOwnerGroupReply,
   EXPLICIT_OWNER_GROUP_REPLY_TRIGGER,
 } from "./group-reply-once.js";
+import { authorizeHighBrainGroup, HIGH_BRAIN_TRIGGER_PREFIX } from "./high-brain.js";
 
 export type GroupHistoryEntry = {
   sender: string;
@@ -214,6 +215,35 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
       return skipGroupMessageAndStoreHistory(
         params,
         `Explicit owner-delegated group reply denied in ${conversationId}: ${explicitOwnerGroupReply.reason}`,
+      );
+    }
+  }
+
+  if (inboundBody === HIGH_BRAIN_TRIGGER_PREFIX) {
+    const highBrainGroup = authorizeHighBrainGroup({
+      cfg: params.cfg,
+      msg: params.msg,
+      baseMentionConfig: {
+        ...baseMentionConfig,
+        allowFrom: explicitOwnerGroupReplyAllowFrom,
+      },
+      authDir: params.authDir,
+      groupHistoryKey: params.groupHistoryKey,
+      groupMemberNames: params.groupMemberNames,
+    });
+    if (highBrainGroup.status !== "not_trigger") {
+      if (highBrainGroup.status === "authorized") {
+        params.msg.groupMention = { wasMentioned: true, requireMention: false };
+        params.msg.highBrain = {
+          sourceEventId: highBrainGroup.sourceEventId,
+          mode: highBrainGroup.mode,
+        };
+        params.logVerbose("Owner-authorized High Brain group reply accepted");
+        return { shouldProcess: true };
+      }
+      return skipGroupMessageAndStoreHistory(
+        params,
+        `Owner-authorized High Brain group reply denied: ${highBrainGroup.reason}`,
       );
     }
   }

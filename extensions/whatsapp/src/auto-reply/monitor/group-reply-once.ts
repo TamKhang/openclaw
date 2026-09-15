@@ -176,11 +176,13 @@ export function authorizeExplicitOwnerGroupReply(
     groupMemberNames: Map<string, Map<string, string>>;
     authoritativeDisplayName?: string;
     otherParticipantNames?: string[];
+    /** Exact trigger body for this delegated reply. Defaults to "Bruno, come in". */
+    trigger?: string;
   },
   runtime: GroupReplyOnceRuntime = defaultGroupReplyOnceRuntime,
 ): GroupReplyOnceAuthorizeResult {
   const body = params.msg.payload.commandBody ?? params.msg.payload.body;
-  if (body !== EXPLICIT_OWNER_GROUP_REPLY_TRIGGER) {
+  if (body !== (params.trigger ?? EXPLICIT_OWNER_GROUP_REPLY_TRIGGER)) {
     return { status: "not_trigger" };
   }
 
