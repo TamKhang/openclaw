@@ -3,9 +3,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestWebInboundMessage } from "../inbound/test-message.test-helper.js";
 import type { AdmittedWebInboundMessage } from "../inbound/types.js";
+import {
+  resetWhatsAppOutboundAuthorizationRegistrarForTests,
+  setWhatsAppOutboundAuthorizationRegistrar,
+  type WhatsAppOutboundAuthorizationRegistrar,
+} from "../runtime.js";
 import { buildMentionConfig } from "./mentions.js";
 import { applyGroupGating, type GroupHistoryEntry } from "./monitor/group-gating.js";
 import {
@@ -18,10 +23,15 @@ import { buildInboundLine } from "./monitor/message-line.js";
 let sessionDir: string | undefined;
 let sessionStorePath: string;
 
+const monitorRegistrar = vi.fn() as unknown as WhatsAppOutboundAuthorizationRegistrar;
+
 beforeEach(async () => {
   sessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-group-gating-"));
   sessionStorePath = path.join(sessionDir, "sessions.json");
   await fs.writeFile(sessionStorePath, "{}");
+  resetWhatsAppOutboundAuthorizationRegistrarForTests();
+  monitorRegistrar.mockClear();
+  setWhatsAppOutboundAuthorizationRegistrar(monitorRegistrar);
 });
 
 afterEach(async () => {

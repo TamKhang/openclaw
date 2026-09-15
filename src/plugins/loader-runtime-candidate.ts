@@ -1,4 +1,8 @@
 import fs from "node:fs";
+import {
+  isTrustedBundledChannelRuntimeDependencyRequest,
+  resolveBundledChannelRuntimeDependency,
+} from "../channels/plugins/bundled-runtime-dependencies.js";
 import { describeRootFileOpenFailure, openRootFileSync } from "../infra/boundary-file-read.js";
 import { isBundleCapabilitySupported } from "./bundle-capability-support.js";
 import { inspectBundleMcpRuntimeSupport } from "./bundle-mcp.js";
@@ -62,6 +66,7 @@ import {
 } from "./runtime-degraded-state.js";
 import { recordImportedPluginId } from "./runtime.js";
 import { hasKind, kindsEqual } from "./slots.js";
+import type { OpenClawPluginDefinition } from "./types.js";
 import type { OpenClawPluginModule, PluginLogger } from "./types.js";
 
 type PluginRegistryBuilder = ReturnType<typeof createPluginRegistry>;
@@ -532,6 +537,16 @@ export function loadRuntimePluginCandidate(params: {
     hookPolicy: entry?.hooks,
     registrationMode: registrationPlan.mode,
   });
+  // Runtime-dependency injection is available only to the authentic bundled
+  // implementation. The plugin-controlled setter is neither read nor invoked
+  // unless the record carries host-owned bundled provenance and the expected
+  // bundled-channel-entry kind; everything else fails closed.
+  const channelRuntimeDependency = isTrustedBundledChannelRuntimeDependencyRequest({
+    origin: record.origin,
+    kind: record.kind,
+  })
+    ? readBundledChannelRuntimeDependency(definition)
+    : undefined;
   const beforeRegister = performance.now();
   let registerFailed = false;
   try {
@@ -540,6 +555,15 @@ export function loadRuntimePluginCandidate(params: {
       `${registrationPlan.mode}:register`,
       () => runPluginRegisterSyncInRegistry(register, api, registry, record.id),
     );
+    if (channelRuntimeDependency) {
+      const deps = resolveBundledChannelRuntimeDependency({
+        pluginId: record.id,
+        capability: channelRuntimeDependency.capability,
+      });
+      if (deps !== undefined) {
+        channelRuntimeDependency.setter(deps);
+      }
+    }
     // Dashboard entries stay inside the same registry snapshot as their RPC handlers.
     // Non-activating snapshots are private until cached activation; rollback restores both.
     if (registrationPlan.runRuntimeCapabilityPolicy) {
@@ -628,4 +652,22 @@ function recordBundleDiagnostics(params: {
     }
   }
   params.registry.plugins.push(params.record);
+}
+
+function readBundledChannelRuntimeDependency(
+  definition: OpenClawPluginDefinition | undefined,
+): { capability: string; setter: (deps: unknown) => void } | undefined {
+  const entry = definition as
+    | (OpenClawPluginDefinition & {
+        setChannelRuntimeDependencies?: (deps: unknown) => void;
+        runtimeDependencyCapability?: string;
+      })
+    | undefined;
+  if (!entry?.setChannelRuntimeDependencies || !entry.runtimeDependencyCapability) {
+    return undefined;
+  }
+  return {
+    capability: entry.runtimeDependencyCapability,
+    setter: entry.setChannelRuntimeDependencies,
+  };
 }

@@ -1,7 +1,11 @@
-import { claimWhatsAppOutboundAuthorizationForTransport } from "openclaw/plugin-sdk/whatsapp-outbound-authorization";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
+import {
+  resetWhatsAppOutboundAuthorizationRegistrarForTests,
+  setWhatsAppOutboundAuthorizationRegistrar,
+  type WhatsAppOutboundAuthorizationRegistrar,
+} from "../../runtime.js";
 import {
   authorizeExplicitOwnerGroupReply,
   consumeGroupReplyOnceAuthorization,
@@ -56,8 +60,15 @@ function authorize(params: {
   });
 }
 
+const registrarMock = vi.fn() as unknown as WhatsAppOutboundAuthorizationRegistrar;
+
 describe("authorizeExplicitOwnerGroupReply", () => {
-  beforeEach(() => resetGroupReplyOnceForTests());
+  beforeEach(() => {
+    resetGroupReplyOnceForTests();
+    resetWhatsAppOutboundAuthorizationRegistrarForTests();
+    registrarMock.mockClear();
+    setWhatsAppOutboundAuthorizationRegistrar(registrarMock);
+  });
 
   it("authorizes an owner quote trigger and binds the exact target", () => {
     const msg = makeGroupReplyMessage();
@@ -120,7 +131,12 @@ describe("authorizeExplicitOwnerGroupReply", () => {
 });
 
 describe("consumeGroupReplyOnceAuthorization", () => {
-  beforeEach(() => resetGroupReplyOnceForTests());
+  beforeEach(() => {
+    resetGroupReplyOnceForTests();
+    resetWhatsAppOutboundAuthorizationRegistrarForTests();
+    registrarMock.mockClear();
+    setWhatsAppOutboundAuthorizationRegistrar(registrarMock);
+  });
 
   it("consumes an authorization exactly once", () => {
     const msg = makeGroupReplyMessage();
@@ -197,7 +213,12 @@ describe("consumeGroupReplyOnceAuthorization", () => {
 });
 
 describe("createExplicitOwnerReplyDeliveryGate", () => {
-  beforeEach(() => resetGroupReplyOnceForTests());
+  beforeEach(() => {
+    resetGroupReplyOnceForTests();
+    resetWhatsAppOutboundAuthorizationRegistrarForTests();
+    registrarMock.mockClear();
+    setWhatsAppOutboundAuthorizationRegistrar(registrarMock);
+  });
 
   it("validates delegated delivery without consuming the delegation store", () => {
     const msg = makeGroupReplyMessage();
@@ -208,18 +229,18 @@ describe("createExplicitOwnerReplyDeliveryGate", () => {
     expect(gate.claimForDelivery()).toMatchObject({ status: "authorized" });
   });
 
-  it("central trusted registry enforces the single delegated physical send", () => {
+  it("passes the exact delegated permit to the injected host registrar", () => {
     const msg = makeGroupReplyMessage();
     const result = authorize({ msg });
     expect(result.status).toBe("authorized");
     if (result.status !== "authorized") return;
-    // Mirrors the flat ctxPayload.OutboundGroupReplyAuthorization projection
-    // built by process-message.ts for the transport gate.
-    const authorization = {
-      authorizationClass: "delegated_group_reply" as const,
-      policyVersion: 1 as const,
-      actionType: "whatsapp.group.send" as const,
-      capability: "whatsapp.group.reply_once" as const,
+    expect(registrarMock).toHaveBeenCalledTimes(1);
+    const permit = registrarMock.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(permit).toMatchObject({
+      authorizationClass: "delegated_group_reply",
+      policyVersion: 1,
+      actionType: "whatsapp.group.send",
+      capability: "whatsapp.group.reply_once",
       token: result.authorization.token,
       ownerE164: result.authorization.ownerE164,
       groupId: "group@g.us",
@@ -230,17 +251,8 @@ describe("createExplicitOwnerReplyDeliveryGate", () => {
       sourceEventId: result.authorization.sourceEventId,
       createdAt: result.authorization.createdAt,
       expiresAt: result.authorization.expiresAt,
-      maxSends: 1 as const,
-    };
-    const claim = () =>
-      claimWhatsAppOutboundAuthorizationForTransport({
-        to: "group@g.us",
-        channel: "whatsapp",
-        authorization,
-        originEventId: authorization.sourceEventId,
-      });
-    expect(claim()).toMatchObject({ status: "authorized" });
-    expect(claim()).toMatchObject({ status: "denied", reasonCode: "consumed_permit" });
+      maxSends: 1,
+    });
   });
 
   it("treats an absent authorization as not required", () => {

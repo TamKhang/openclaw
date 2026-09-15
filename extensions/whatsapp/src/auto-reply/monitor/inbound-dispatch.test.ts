@@ -5,6 +5,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createAcceptedWhatsAppSendResult } from "../../inbound/send-result.test-helper.js";
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
 import { loadWebMedia } from "../../media.js";
+import {
+  resetWhatsAppOutboundAuthorizationRegistrarForTests,
+  setWhatsAppOutboundAuthorizationRegistrar,
+  type WhatsAppOutboundAuthorizationRegistrar,
+} from "../../runtime.js";
 import { deliverWebReply } from "../deliver-reply.js";
 import {
   authorizeExplicitOwnerGroupReply,
@@ -56,6 +61,20 @@ const {
   readAgentRunTerminalOutcomeMock: vi.fn(),
   sourceReplyDeliveryModeContexts: [] as unknown[],
 }));
+
+const claimWhatsAppOutboundAuthorizationForTransportMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => unknown>(),
+);
+
+vi.mock("openclaw/plugin-sdk/whatsapp-outbound-authorization", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("openclaw/plugin-sdk/whatsapp-outbound-authorization")>();
+  return {
+    ...actual,
+    claimWhatsAppOutboundAuthorizationForTransport:
+      claimWhatsAppOutboundAuthorizationForTransportMock,
+  };
+});
 
 vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/channel-inbound")>();
@@ -807,8 +826,19 @@ async function dispatchDeferredMediaReplacement(
   return { finalization, replacement };
 }
 
+const inboundRegistrar = vi.fn() as unknown as WhatsAppOutboundAuthorizationRegistrar;
+
 describe("whatsapp inbound dispatch", () => {
   beforeEach(() => {
+    resetGroupReplyOnceForTests();
+    resetWhatsAppOutboundAuthorizationRegistrarForTests();
+    inboundRegistrar.mockClear();
+    setWhatsAppOutboundAuthorizationRegistrar(inboundRegistrar);
+    claimWhatsAppOutboundAuthorizationForTransportMock.mockReset();
+    claimWhatsAppOutboundAuthorizationForTransportMock.mockReturnValue({
+      status: "denied",
+      reasonCode: "unknown_authorization",
+    });
     capturedDispatchParams = undefined;
     sourceReplyDeliveryModeContexts.length = 0;
     dispatchReplyWithBufferedBlockDispatcherMock.mockClear();
@@ -1258,6 +1288,14 @@ describe("whatsapp inbound dispatch", () => {
     resetGroupReplyOnceForTests();
     const msg = makeDelegatedGroupReplyMsg();
     const authorization = authorizeDelegatedGroupReply(msg);
+    claimWhatsAppOutboundAuthorizationForTransportMock
+      .mockReturnValueOnce({
+        status: "authorized",
+        authorizationClass: "delegated_group_reply",
+        token: authorization.token,
+        destinationChatId: "123@g.us",
+      })
+      .mockReturnValue({ status: "denied", reasonCode: "consumed_permit" });
     const deliverReply = vi.fn(async () => acceptedDeliveryResult());
     await dispatchBufferedReply({
       deliverReply,

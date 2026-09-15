@@ -27,6 +27,24 @@ type RealBrunoModule = typeof import("./bruno-model-routing.js") & {
   };
 };
 
+// Semantic complexity is derived from prompt_text; body_length is metadata only.
+const LOW_PROMPT = "What time is it in Sydney right now?";
+const MEDIUM_PROMPT =
+  "Compare optimistic and pessimistic concurrency control for a distributed job queue and recommend one.";
+const HIGH_PROMPT =
+  "Plan the multi-stage production rollout and certification for migrating our dev GitHub pipeline to prod, covering staging, pre-prod and production gates with rollback verification.";
+
+function facts(promptText: string, senderIsOwner = true) {
+  return {
+    prompt_text: promptText,
+    body_length: promptText.length,
+    is_group: false,
+    sender_is_owner: senderIsOwner,
+    command_authorized: false,
+    capability_id: "whatsapp.dm.standard",
+  };
+}
+
 afterEach(() => {
   resetBrunoModelRoutingInitializationForTest();
 });
@@ -42,92 +60,68 @@ describe("real Bruno Brain model-routing integration", () => {
     expect(typeof mod.routeModelWithPolicyForTurn).toBe("function");
   });
 
-  it("classifies low/medium/high complexity through the authoritative path", async () => {
+  it("classifies low/medium/high complexity from prompt_text through the authoritative path", async () => {
     const mod = await loadRealBruno();
-    const low = mod.routeModelWithPolicyForTurn({
-      body_length: 100,
-      is_group: false,
-      sender_is_owner: true,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
-    const medium = mod.routeModelWithPolicyForTurn({
-      body_length: 600,
-      is_group: false,
-      sender_is_owner: true,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
-    const high = mod.routeModelWithPolicyForTurn({
-      body_length: 2000,
-      is_group: false,
-      sender_is_owner: true,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
+    const low = mod.routeModelWithPolicyForTurn(facts(LOW_PROMPT));
+    const medium = mod.routeModelWithPolicyForTurn(facts(MEDIUM_PROMPT));
+    const high = mod.routeModelWithPolicyForTurn(facts(HIGH_PROMPT));
     expect(low.classification.complexity).toBe("low");
     expect(medium.classification.complexity).toBe("medium");
     expect(high.classification.complexity).toBe("high");
   });
 
+  it("routes LOW to openrouter/free, MEDIUM to deepseek-v4-flash, HIGH to deepseek-flash", async () => {
+    const mod = await loadRealBruno();
+    const low = mod.routeModelWithPolicyForTurn(facts(LOW_PROMPT));
+    const medium = mod.routeModelWithPolicyForTurn(facts(MEDIUM_PROMPT));
+    const high = mod.routeModelWithPolicyForTurn(facts(HIGH_PROMPT));
+    expect(low.selected_model?.model_id).toBe("openrouter/free");
+    expect(medium.selected_model?.model_id).toBe("deepseek-v4-flash");
+    expect(high.selected_model?.model_id).toBe("deepseek-flash");
+  });
+
+  it("keeps Gemini as an approved fallback, never as a routing tier", async () => {
+    const mod = await loadRealBruno();
+    for (const prompt of [LOW_PROMPT, MEDIUM_PROMPT, HIGH_PROMPT]) {
+      const decision = mod.routeModelWithPolicyForTurn(facts(prompt));
+      expect(decision.fallback_alternatives.map((c) => `${c.provider}/${c.model_id}`)).toContain(
+        "google/gemini-3.8-flash",
+      );
+    }
+  });
+
+  it("does not force HIGH or a premium tier from the Bruno, come in trigger text", async () => {
+    const mod = await loadRealBruno();
+    const decision = mod.routeModelWithPolicyForTurn(facts("Bruno, come in"));
+    expect(decision.classification.complexity).toBe("low");
+    expect(decision.selected_model?.model_id).toBe("openrouter/free");
+  });
+
   it("enforces risk constraints through the authoritative path", async () => {
     const mod = await loadRealBruno();
-    const lowRisk = mod.routeModelWithPolicyForTurn({
-      body_length: 100,
-      is_group: false,
-      sender_is_owner: true,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
-    const highRisk = mod.routeModelWithPolicyForTurn({
-      body_length: 100,
-      is_group: false,
-      sender_is_owner: false,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
+    const lowRisk = mod.routeModelWithPolicyForTurn(facts(LOW_PROMPT, true));
+    const highRisk = mod.routeModelWithPolicyForTurn(facts(LOW_PROMPT, false));
     expect(lowRisk.classification.risk_level).toBe("low");
     expect(highRisk.classification.risk_level).toBe("high");
   });
 
   it("does not admit openrouter/free for a high-complexity request", async () => {
     const mod = await loadRealBruno();
-    const decision = mod.routeModelWithPolicyForTurn({
-      body_length: 2000,
-      is_group: false,
-      sender_is_owner: true,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
+    const decision = mod.routeModelWithPolicyForTurn(facts(HIGH_PROMPT));
     const admitted = [decision.selected_model, ...decision.fallback_alternatives].filter(Boolean);
     expect(admitted.some((candidate) => candidate!.model_id === "openrouter/free")).toBe(false);
   });
 
   it("does not admit openrouter/free for a high-risk request", async () => {
     const mod = await loadRealBruno();
-    const decision = mod.routeModelWithPolicyForTurn({
-      body_length: 100,
-      is_group: false,
-      sender_is_owner: false,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
+    const decision = mod.routeModelWithPolicyForTurn(facts(LOW_PROMPT, false));
     const admitted = [decision.selected_model, ...decision.fallback_alternatives].filter(Boolean);
     expect(admitted.some((candidate) => candidate!.model_id === "openrouter/free")).toBe(false);
   });
 
   it("classification returned is the classification used for the decision", async () => {
     const mod = await loadRealBruno();
-    const decision = mod.routeModelWithPolicyForTurn({
-      body_length: 600,
-      is_group: false,
-      sender_is_owner: true,
-      command_authorized: false,
-      capability_id: "whatsapp.dm.standard",
-    });
-    // The engine ranks from this classification; assert the decision's
-    // classification matches the facts-driven expected medium/low values and
-    // that the selected model is compatible with that classification.
+    const decision = mod.routeModelWithPolicyForTurn(facts(MEDIUM_PROMPT));
     expect(decision.classification).toMatchObject({
       complexity: "medium",
       risk_level: "low",
@@ -143,7 +137,13 @@ describe("real Bruno Brain model-routing integration", () => {
     });
     expect(router).not.toBeNull();
     const decision = await router!.route(
-      { bodyLength: 600, isGroup: false, senderIsOwner: true, commandAuthorized: false },
+      {
+        promptText: MEDIUM_PROMPT,
+        bodyLength: MEDIUM_PROMPT.length,
+        isGroup: false,
+        senderIsOwner: true,
+        commandAuthorized: false,
+      },
       { capabilityId: "whatsapp.dm.standard", traceId: "trace-real-1" },
     );
     expect(decision.reason).toBe("selected");
@@ -178,7 +178,8 @@ describe("real Bruno Brain startup wiring", () => {
       enabled: true,
       scope: { messageProvider: "whatsapp", chatType: "direct" },
       facts: {
-        bodyLength: 600,
+        promptText: MEDIUM_PROMPT,
+        bodyLength: MEDIUM_PROMPT.length,
         isGroup: false,
         senderIsOwner: true,
         commandAuthorized: false,

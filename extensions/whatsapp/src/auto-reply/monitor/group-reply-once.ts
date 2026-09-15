@@ -7,7 +7,6 @@
 // WhatsApp outbound delivery guard consumes the authorization.
 import { randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { registerWhatsAppOutboundAuthorization } from "openclaw/plugin-sdk/whatsapp-outbound-authorization-registration";
 import {
   getPrimaryIdentityId,
   getReplyContext,
@@ -18,6 +17,7 @@ import {
 import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
 import { resolveWhatsAppInboundEventIdentity } from "../../inbound/inbound-event-identity.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
+import { getOptionalWhatsAppOutboundAuthorizationRegistrar } from "../../runtime.js";
 import { normalizeE164 } from "../../text-runtime.js";
 import type { MentionConfig } from "../mentions.js";
 import { resolveOwnerList } from "../mentions.js";
@@ -254,6 +254,14 @@ export function authorizeExplicitOwnerGroupReply(
     consumed: false,
   };
 
+  // Fail closed: minting is impossible without the host-injected registrar.
+  // The externalized package no longer imports the private-local-only
+  // registration subpath; it only invokes the trusted injected capability.
+  const registrar = getOptionalWhatsAppOutboundAuthorizationRegistrar();
+  if (!registrar) {
+    return { status: "denied", reason: "authorization_registration_unavailable" };
+  }
+
   const store = resolveGroupReplyDelegationStore();
   const created = store.createIfAbsent(identity.sourceEventId, authorization);
   if (!created) {
@@ -272,7 +280,7 @@ export function authorizeExplicitOwnerGroupReply(
   }
 
   params.msg.groupReplyOnce = authorization;
-  registerWhatsAppOutboundAuthorization({
+  registrar({
     authorizationClass: authorization.authorizationClass,
     policyVersion: authorization.policyVersion,
     actionType: authorization.actionType,

@@ -61,6 +61,11 @@ type DefineBundledChannelEntryOptions<TPlugin = ChannelPlugin> = {
   secrets?: BundledEntryModuleRef;
   configSchema?: ChannelEntryConfigSchema<TPlugin> | (() => ChannelEntryConfigSchema<TPlugin>);
   runtime?: BundledEntryModuleRef;
+  /** Optional trusted runtime dependency injected by the host after channel registration. */
+  runtimeDependencies?: {
+    capability: string;
+    setter: BundledEntryModuleRef;
+  };
   accountInspect?: BundledEntryModuleRef;
   features?: BundledChannelEntryFeatures;
   registerCliMetadata?: (api: OpenClawPluginApi) => void;
@@ -118,6 +123,10 @@ export type BundledChannelEntryContract<TPlugin = ChannelPlugin> = {
     options?: BundledEntryModuleLoadOptions,
   ) => NonNullable<ChannelPlugin["config"]["inspectAccount"]>;
   setChannelRuntime?: (runtime: BundledChannelRuntime) => void;
+  /** Setter for host-resolved, trusted channel runtime dependencies. */
+  setChannelRuntimeDependencies?: (deps: unknown) => void;
+  /** Capability name requested through setChannelRuntimeDependencies. */
+  runtimeDependencyCapability?: string;
 };
 
 /** Runtime contract returned by a bundled channel's setup-only entrypoint definition. */
@@ -506,6 +515,7 @@ export function defineBundledChannelEntry<TPlugin = ChannelPlugin>({
   secrets,
   configSchema,
   runtime,
+  runtimeDependencies,
   accountInspect,
   features,
   registerCliMetadata,
@@ -546,6 +556,15 @@ export function defineBundledChannelEntry<TPlugin = ChannelPlugin>({
           runtime,
         );
         setter(pluginRuntime);
+      }
+    : undefined;
+  const setChannelRuntimeDependencies = runtimeDependencies
+    ? (deps: unknown) => {
+        const setter = loadBundledEntryExportSync<(deps: unknown) => void>(
+          importMetaUrl,
+          runtimeDependencies.setter,
+        );
+        setter(deps);
       }
     : undefined;
 
@@ -594,6 +613,8 @@ export function defineBundledChannelEntry<TPlugin = ChannelPlugin>({
     ...(loadChannelSecrets ? { loadChannelSecrets } : {}),
     ...(loadChannelAccountInspector ? { loadChannelAccountInspector } : {}),
     ...(setChannelRuntime ? { setChannelRuntime } : {}),
+    ...(setChannelRuntimeDependencies ? { setChannelRuntimeDependencies } : {}),
+    ...(runtimeDependencies ? { runtimeDependencyCapability: runtimeDependencies.capability } : {}),
   };
 }
 

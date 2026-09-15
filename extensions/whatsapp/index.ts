@@ -29,5 +29,12 @@ export default defineBundledChannelEntry({
     specifier: "./runtime-setter-api.js",
     exportName: "setWhatsAppRuntime",
   },
+  runtimeDependencies: {
+    capability: "whatsapp:outbound-authorization-registration",
+    setter: {
+      specifier: "./runtime-setter-api.js",
+      exportName: "setWhatsAppOutboundAuthorizationRegistrar",
+    },
+  },
   registerFull: registerWhatsAppAgentTools,
 });
